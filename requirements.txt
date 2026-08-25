@@ -1,0 +1,17 @@
+# TUTORial — Flask prototype
+#
+# System requirement: ffmpeg AND ffprobe must be on PATH (videopython shells out
+# to both).  Debian/Ubuntu:  apt-get install -y --no-install-recommends ffmpeg
+#                    macOS:  brew install ffmpeg
+
+Flask>=3.0
+anthropic>=1.0
+videopython>=0.55          # SegmentConfig / TransitionSpec / VideoEdit / Video
+cairosvg>=2.7              # rasterises Claude's SVG frames
+Pillow>=10.0
+requests>=2.31             # only used to fetch the notebook fonts on first run
+
+# Optional. Installs torch and friends (several GB) and gives every scene a
+# spoken narration track via videopython's TextToSpeech. Without it the frames
+# carry their narration as an on-screen caption instead and the video is silent.
+#   pip install "videopython[ai]"
