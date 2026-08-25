@@ -22,7 +22,6 @@ Run:
 from __future__ import annotations
 
 import base64
-import io
 import json
 import mimetypes
 import os
@@ -51,24 +50,12 @@ ANTHROPIC_API_KEY = "sk-ant-REPLACE-WITH-YOUR-KEY"
 MODEL = "claude-opus-5"
 
 CHECKPOINT_COUNT = 6          # the video stops this many times
-SCENES_PER_STEP = (2, 4)      # SVG scenes Claude draws per step
-FRAME_W, FRAME_H = 1280, 720  # rasterised SVG size, and the video's resolution
-FPS = 24
-MIN_SCENE_SECONDS = 3.0
-MAX_SCENE_SECONDS = 11.0
-CHARS_PER_SECOND = 14.0       # narration pacing when no TTS voice is available
+SCENES_PER_STEP = (2, 4)      # scenes Claude writes per step
 
 BASE_DIR = Path(__file__).resolve().parent
 MEDIA_DIR = BASE_DIR / "media"
 UPLOAD_DIR = BASE_DIR / "media" / "_uploads"
 FONT_DIR = BASE_DIR / "static" / "fonts"
-
-# videopython's curated crossfade catalog. Claude picks from exactly this list
-# when it says how one SVG scene should flow into the next.
-TRANSITION_TYPES = [
-    "fade", "dissolve", "wipeleft", "wiperight",
-    "wipeup", "wipedown", "slideleft", "slideright",
-]
 
 # The notebook palette, handed to Claude so the generated frames sit on the same
 # page as the interface around them.
@@ -128,8 +115,8 @@ def require_ffmpeg() -> None:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FONTS — the generated frames should be typeset in the notebook's own hands.
-# Downloaded once into static/fonts and registered with fontconfig so cairosvg
-# can find them. Offline, cairo falls back and the frames still render.
+# Downloaded once into static/fonts and registered with fontconfig so the SVG
+# in each image_prompt can name them. Offline, the renderer substitutes.
 # ─────────────────────────────────────────────────────────────────────────────
 
 GOOGLE_FONTS = {
@@ -256,20 +243,22 @@ def image_block(path: Path) -> dict:
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
 SVG_STYLE_RULES = f"""
-Every SVG you draw is a frame of a hand-kept school notebook, and the frames run
-together as one continuous video. Follow these rules exactly.
+Each scene's `image_prompt` is not a description of a picture — it IS a complete SVG
+document written out as text, followed by directions for how that frame should flow
+into the next scene's SVG. Write the SVG first, then the directions, in one string.
 
-CANVAS
-- Root tag: <svg xmlns="http://www.w3.org/2000/svg" width="{FRAME_W}" height="{FRAME_H}"
-  viewBox="0 0 {FRAME_W} {FRAME_H}"> ... </svg>
-- Nothing outside the root tag. No markdown, no comments, no <script>, no <foreignObject>,
-  no external images, no href to anything off-canvas. Self-contained vector shapes and text only.
+THE SVG
+- Root tag: <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"
+  viewBox="0 0 1920 1080"> ... </svg>
+- Self-contained vector shapes and text only. No <script>, no <foreignObject>, no
+  external images, no href to anything off-canvas, no markdown fences around it.
 
 SUBSTRATE (identical on every frame, so the page never jumps)
 - Full-bleed cream sheet: <rect> filling the canvas in {PALETTE['paper']}.
-- Ruled blue lines every 34px in {PALETTE['rule']}, starting at y=78.
-- A double pink margin rule down the left at x=96 and x=102 in {PALETTE['margin']}.
-- Three punched holes down the left gutter at x=48, y=120 / 360 / 600, r=13, fill {PALETTE['sky']} at low opacity.
+- Ruled blue lines every 50px in {PALETTE['rule']}, starting at y=120.
+- A double pink margin rule down the left at x=144 and x=153 in {PALETTE['margin']}.
+- Three punched holes down the left gutter at x=72, y=180 / 540 / 900, r=19,
+  fill {PALETTE['sky']} at low opacity.
 
 PALETTE — use these and nothing else
 - ink {PALETTE['ink']} · lilac {PALETTE['lilac']} / {PALETTE['lilac_dk']} · blush {PALETTE['blush']} / {PALETTE['blush_dk']}
@@ -277,84 +266,73 @@ PALETTE — use these and nothing else
 - highlighter {PALETTE['yellow']} / {PALETTE['yellow_dk']} · lime {PALETTE['lime']} · muted {PALETTE['muted']}
 
 TYPE — three voices, never mixed up
-- font-family="Lilita One" for headlines and stamped labels. ALL CAPS, chunky.
-- font-family="Patrick Hand" for body text and worked math.
-- font-family="Caveat" for margin asides and annotations.
-- Always give a fallback: font-family="Lilita One, sans-serif".
-- Body text is never smaller than 26px. Headlines are 44–64px.
+- font-family="Lilita One, sans-serif" for headlines and stamped labels. ALL CAPS, chunky.
+- font-family="Patrick Hand, cursive" for body text and worked math.
+- font-family="Caveat, cursive" for margin asides and annotations.
+- Body text is never smaller than 38px. Headlines are 66-96px.
 
 PHYSICAL VOCABULARY — this is what makes it read as paper, not as a slide
-- Cards are placed on the page: a hard offset shadow (a duplicate <rect> nudged 3px right
-  and 4px down in a tint), never a blur filter.
-- Everything sits at a sub-degree angle: transform="rotate(-0.6 640 360)" and similar.
-- Highlighter swipes behind key phrases: a <rect> in {PALETTE['yellow']} behind the text, not a solid fill over it.
+- Cards are placed on the page: a hard offset shadow (a duplicate <rect> nudged 4px right
+  and 6px down in a tint), never a blur filter.
+- Everything sits at a sub-degree angle: transform="rotate(-0.6 960 540)" and similar.
+- Highlighter swipes behind key phrases: a <rect> in {PALETTE['yellow']} behind the text,
+  not a solid fill over it.
 - Sticky notes get a torn corner: a <path> polygon with the top-right corner cut off.
 - Washi tape holding a card down: a translucent <rect> rotated a few degrees across its edge.
 - Labels are stamped in a flagged tag box: a filled rect with a triangle point on its right edge.
 
 LAYOUT AND LEGIBILITY
-- Keep all content inside x ∈ [132, 1180] and y ∈ [70, 660]. Nothing touches an edge.
+- Keep all content inside x from 200 to 1770 and y from 110 to 990. Nothing touches an edge.
 - One idea per frame. Large, few elements, generous whitespace. This is a video, not a poster.
-- Every frame carries the narration for that frame as a caption strip along the bottom
-  (y ≈ 600–660) in Patrick Hand at 28px on a cream card, so the video is followable with the
-  sound off. Wrap it yourself across <tspan x="..." dy="34"> lines — SVG does not wrap text.
+- Every frame carries its own narration as a caption strip along the bottom (y around
+  900-990) in Patrick Hand at 42px on a cream card, so the video is followable with the sound
+  off. Wrap it yourself across <tspan x="..." dy="50"> lines — SVG does not wrap text.
 - Math is drawn, not described: draw the triangle, label the sides, show the proportion as
   laid-out text with the numbers in place.
 
-CONTINUITY BETWEEN FRAMES — this is what makes the video flow
+THE TRANSITION DIRECTIONS — appended after the SVG, inside the same string
+- After the closing </svg>, write a line beginning `TRANSITION TO NEXT SCENE:` and then say,
+  in plain words, how this frame should become the next one: what stays fixed on the page,
+  what is added, and what should fade in where. Name the elements.
 - Frames within one step share a layout. Keep the diagram in the same place at the same size
-  from frame to frame and change only what the step is adding: a new label, a highlighted side,
-  a line of work appearing below the last. The crossfade then reads as annotation appearing on
-  a page, not as a slide change.
-- Because consecutive frames are near-identical apart from the new mark, pick "dissolve" for
-  those. Reserve a wipe or slide for a genuine change of subject (e.g. leaving the diagram to
-  do algebra). The first scene of a segment has no predecessor, so its transition is "none".
+  from frame to frame and change only what the step is adding — a new label, a highlighted
+  side, a line of work appearing below the last. The crossfade then reads as annotation
+  appearing on a page rather than a slide change, so say exactly that.
+- On the LAST scene of the segment write:
+  `TRANSITION TO NEXT SCENE: none — final frame before the student takes over.`
 """
 
 SCENE_SCHEMA = {
     "type": "object",
     "properties": {
-        "theme_note": {
-            "type": "string",
-            "description": "One sentence: the shared visual layout these frames hold across the cut.",
-        },
         "scenes": {
             "type": "array",
             "description": (
-                f"{SCENES_PER_STEP[0]}-{SCENES_PER_STEP[1]} frames, in order. "
+                f"{SCENES_PER_STEP[0]}-{SCENES_PER_STEP[1]} scenes, in order. "
                 "Structured outputs cannot bound array length, so hold to that range yourself."
             ),
             "items": {
                 "type": "object",
                 "properties": {
-                    "svg": {"type": "string", "description": "A complete, self-contained SVG document."},
+                    "image_prompt": {
+                        "type": "string",
+                        "description": (
+                            "A complete SVG document as text, then a line starting "
+                            "'TRANSITION TO NEXT SCENE:' describing how it flows into "
+                            "the next scene's SVG."
+                        ),
+                    },
                     "narration": {
                         "type": "string",
                         "description": "What the voice says over this frame. 1-3 sentences, spoken register.",
                     },
-                    "transition_in": {
-                        "type": "object",
-                        "description": (
-                            "How this frame arrives from the previous one. "
-                            'Use "none" on the first scene of the segment, and for a deliberate hard cut.'
-                        ),
-                        "properties": {
-                            "type": {"type": "string", "enum": TRANSITION_TYPES + ["none"]},
-                            "duration": {
-                                "type": "number",
-                                "description": 'Seconds, between 0.3 and 2.0. Use 0 with "none".',
-                            },
-                        },
-                        "required": ["type", "duration"],
-                        "additionalProperties": False,
-                    },
                 },
-                "required": ["svg", "narration", "transition_in"],
+                "required": ["image_prompt", "narration"],
                 "additionalProperties": False,
             },
         },
     },
-    "required": ["theme_note", "scenes"],
+    "required": ["scenes"],
     "additionalProperties": False,
 }
 
@@ -539,24 +517,14 @@ def normalize_plan(plan: dict) -> dict:
 
 
 def normalize_scenes(payload: dict) -> dict:
-    """Same guard for the scene payload: the array bounds are not enforced either."""
-    scenes = [s for s in (payload.get("scenes") or []) if (s.get("svg") or "").strip()]
+    """Drop anything unusable; the array length is not enforced on the wire."""
+    scenes = []
+    for scene in payload.get("scenes") or []:
+        prompt = str(scene.get("image_prompt") or "").strip()
+        if prompt:
+            scenes.append({"image_prompt": prompt, "narration": str(scene.get("narration") or "")})
     if not scenes:
-        raise ValueError("Claude returned no drawable frames for this step.")
-
-    for i, scene in enumerate(scenes):
-        scene["narration"] = str(scene.get("narration") or "")
-        if i == 0:
-            scene["transition_in"] = None  # nothing precedes the opening frame
-            continue
-        transition = scene.get("transition_in") or {}
-        try:
-            seconds = float(transition.get("duration", 0.8))
-        except (TypeError, ValueError):
-            seconds = 0.8
-        transition["duration"] = max(0.3, min(2.0, seconds or 0.8))
-        scene["transition_in"] = transition
-
+        raise ValueError("Claude returned no usable scenes for this step.")
     payload["scenes"] = scenes
     return payload
 
@@ -589,8 +557,8 @@ def build_step_scenes(plan: dict, index: int) -> dict:
     ) or "  (none — this is the opening step)"
 
     system = (
-        "You draw the frames of a TUTORial lesson video. You are given one step of a worked "
-        "solution and you return a short run of SVG frames that teach exactly that step and then "
+        "You write the scenes of a TUTORial lesson video. You are given one step of a worked "
+        "solution and you return a short run of scenes that teach exactly that step and then "
         "hand off to the student.\n\n" + SVG_STYLE_RULES
     )
 
@@ -614,8 +582,9 @@ Do not answer that question, hint at its answer, or show their problem's numbers
 is the handoff: a stamped "YOUR TURN" card that tells them to take this same move over to their
 own problem. It must not restate the question — the interface asks it.
 
-Draw {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} frames: the step being made on the similar
-problem, then the handoff. Give each frame its narration and its crossfade in."""
+Write {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} scenes: the step being made on the similar
+problem, then the handoff. Each scene is one `image_prompt` — the SVG for that frame followed by
+its TRANSITION TO NEXT SCENE line — and one `narration`."""
 
     return normalize_scenes(ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000))
 
@@ -625,9 +594,9 @@ def build_miss_scenes(plan: dict, index: int, given: str, misconception: str,
     checkpoint = plan["checkpoints"][index]
 
     system = (
-        "You draw the frames of a TUTORial correction video. A student answered a checkpoint "
-        "wrongly. You return a short run of SVG frames that walk back through THEIR OWN problem "
-        "to show where that answer comes from and why it does not hold — then send them back to "
+        "You write the scenes of a TUTORial correction video. A student answered a checkpoint "
+        "wrongly. You return a short run of scenes that walk back through THEIR OWN problem to "
+        "show where that answer comes from and why it does not hold — then send them back to "
         "try again.\n\n" + SVG_STYLE_RULES
     )
 
@@ -641,7 +610,7 @@ They answered: {given}
 The wrong move that produces that answer: {misconception or 'not identified — diagnose it yourself'}
 Why the right answer is right: {checkpoint['explanation']}
 
-Draw {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} frames, working on THEIR problem, not the similar one:
+Write {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} scenes, working on THEIR problem, not the similar one:
 1. Show their figure with the move they made drawn on it — make the wrong step visible, not just named.
 2. Show the thing that breaks. Follow their move to where it contradicts something already on the page.
 3. Point at the one idea that fixes it, WITHOUT completing the step for them.
@@ -679,52 +648,13 @@ THE STUDENT WROTE: {given}"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SVG → FRAMES → VIDEO
+# SCENES → VIDEO
+#
+# The sample pipeline, used as given. Claude supplies the `scenes` list — each
+# item an `image_prompt` (an SVG document as text, plus directions for flowing
+# into the next one) and a `narration` — and nothing sits between that list and
+# videopython.
 # ─────────────────────────────────────────────────────────────────────────────
-
-_STRIP_TAGS = re.compile(r"<\s*(script|foreignObject|iframe|use)\b.*?<\s*/\s*\1\s*>", re.I | re.S)
-_STRIP_SELF = re.compile(r"<\s*(script|foreignObject|iframe|use)\b[^>]*/\s*>", re.I)
-_REMOTE_HREF = re.compile(r"""\s(?:xlink:)?href\s*=\s*(['"])(?!#)[^'"]*\1""", re.I)
-_ON_ATTR = re.compile(r"""\son[a-z]+\s*=\s*(['"]).*?\1""", re.I | re.S)
-
-
-def sanitize_svg(svg: str) -> str:
-    """Model output is rasterised server-side, never injected into the page — but
-    strip scripting and off-canvas references anyway so nothing can reach out."""
-    svg = strip_fences(svg)
-    start = svg.find("<svg")
-    if start > 0:
-        svg = svg[start:]
-    for pattern in (_STRIP_TAGS, _STRIP_SELF, _REMOTE_HREF, _ON_ATTR):
-        svg = pattern.sub("", svg)
-    if "<svg" not in svg:
-        raise ValueError("model returned no SVG document")
-    return svg
-
-
-def rasterize(svg: str):
-    """SVG text → an RGB numpy frame at the video's resolution."""
-    import cairosvg
-    import numpy as np
-    from PIL import Image
-
-    png = cairosvg.svg2png(
-        bytestring=sanitize_svg(svg).encode("utf-8"),
-        output_width=FRAME_W,
-        output_height=FRAME_H,
-        background_color=PALETTE["paper"],
-    )
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    if image.size != (FRAME_W, FRAME_H):
-        image = image.resize((FRAME_W, FRAME_H), Image.LANCZOS)
-    return np.array(image)
-
-
-def scene_seconds(narration: str) -> float:
-    """How long a frame should hold when there is no spoken track to time it."""
-    est = len(narration or "") / CHARS_PER_SECOND + 1.4
-    return round(max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, est)), 2)
-
 
 _warned: set[str] = set()
 
@@ -735,88 +665,43 @@ def warn_once(key: str, message: str) -> None:
         print(f"[{key}] {message}")
 
 
-_tts: Any = "unset"
-
-
-def _speech():
-    """videopython's TextToSpeech, if the heavy `videopython[ai]` extra is installed."""
-    global _tts
-    if _tts == "unset":
-        try:
-            from videopython.ai import TextToSpeech
-            _tts = TextToSpeech()
-        except Exception as exc:
-            warn_once("tts", f"no spoken narration ({exc}); frames carry their captions instead")
-            _tts = None
-    return _tts
-
-
-def render_scenes(scenes: list[dict], workdir: Path, out_path: Path,
-                  on_progress=None) -> dict:
-    """Claude's SVG scenes → one stitched MP4, exactly the sample pipeline:
-    a clip per scene, then one VideoEdit with a crossfade into each follow-on.
-    """
+def create_ai_video(scenes: list[dict], output_path: str, workdir: str = "scenes") -> dict:
+    """One lesson segment, from Claude's scenes to a finished MP4."""
     require_ffmpeg()
-    from videopython.base.video import Video, VideoMetadata
-    from videopython.editing import Resize, SegmentConfig, TransitionSpec, VideoEdit
 
-    workdir.mkdir(parents=True, exist_ok=True)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tts = _speech()
+    from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
+    from videopython.base.video import VideoMetadata
+    from videopython.editing import VideoEdit, SegmentConfig, TransitionSpec, Resize
 
-    clips: list[tuple[Path, float, dict | None, str]] = []
+    image_gen, video_gen, speech_gen = TextToImage(), ImageToVideo(), TextToSpeech()
+
+    Path(workdir).mkdir(parents=True, exist_ok=True)
+    scene_paths = []
     for i, scene in enumerate(scenes):
-        if on_progress:
-            on_progress(i, len(scenes))
+        image = image_gen.generate_image(scene["image_prompt"])
+        video = video_gen.generate_video(image=image)
+        audio = speech_gen.generate_audio(scene["narration"])
+        path = f"{workdir}/scene_{i}.mp4"
+        video.add_audio(audio).save(path)
+        scene_paths.append(path)
 
-        narration = (scene.get("narration") or "").strip()
-        frame = rasterize(scene["svg"])
-        seconds = scene_seconds(narration)
-
-        audio = None
-        if tts is not None and narration:
-            try:
-                audio = tts.generate_audio(narration)
-                seconds = max(MIN_SCENE_SECONDS, round(audio.total_seconds + 0.6, 2))
-            except Exception as exc:
-                warn_once("tts", f"no spoken narration ({exc}); frames carry their captions instead")
-
-        clip = Video.from_image(frame, fps=FPS, length_seconds=seconds)
-        if audio is not None:
-            clip = clip.add_audio(audio)
-
-        path = workdir / f"scene_{i}.mp4"
-        clip.save(str(path))
-        clips.append((path, seconds, scene.get("transition_in"), narration))
-
-    # One segment per scene. Resize standardizes the frame size; the crossfade on
-    # each follow-on scene is the one Claude chose to connect those two frames.
+    # One segment per scene. Resize standardizes to 1080p; a 1s dissolve crossfades
+    # each follow-on scene in (the first has no predecessor, so it carries none).
     segments = []
-    for i, (path, _, transition, _) in enumerate(clips):
+    for i, path in enumerate(scene_paths):
         meta = VideoMetadata.from_path(path)
-        spec = None
-        kind = (transition or {}).get("type", "dissolve")
-        # The opening scene has no predecessor, and "none" is Claude asking for a hard cut.
-        if i > 0 and kind != "none":
-            length = float((transition or {}).get("duration", 0.8) or 0.8)
-            if kind not in TRANSITION_TYPES:
-                kind = "dissolve"
-            # A crossfade cannot be longer than either clip it overlaps.
-            prev = VideoMetadata.from_path(clips[i - 1][0]).total_seconds
-            length = max(0.3, min(length, prev - 0.3, meta.total_seconds - 0.3))
-            spec = TransitionSpec(type=kind, duration=round(length, 2))
         segments.append(SegmentConfig(
-            source=str(path),
+            source=path,
             start=0,
             end=meta.total_seconds,
-            operations=[Resize(width=FRAME_W, height=FRAME_H)],
-            transition_in=spec,
+            operations=[Resize(width=1920, height=1080)],
+            transition_in=None if i == 0 else TransitionSpec(type="dissolve", duration=1.0),
         ))
 
-    VideoEdit(segments=segments).run_to_file(str(out_path))
+    VideoEdit(segments=segments).run_to_file(output_path)
 
     # Where each narration line lands on the assembled timeline, so the page can
-    # follow along in text as the video plays.
+    # follow along in text. Read off the same segments the edit was built from.
     transcript, cursor = [], 0.0
     for i, segment in enumerate(segments):
         overlap = segment.transition_in.duration if segment.transition_in else 0.0
@@ -825,15 +710,14 @@ def render_scenes(scenes: list[dict], workdir: Path, out_path: Path,
         transcript.append({
             "start": round(cursor, 2),
             "end": round(cursor + length, 2),
-            "text": clips[i][3],
+            "text": scenes[i]["narration"],
         })
         cursor += length
 
-    for path, *_ in clips:
-        path.unlink(missing_ok=True)
-
-    duration = VideoMetadata.from_path(out_path).total_seconds
-    return {"duration": round(duration, 2), "transcript": transcript}
+    return {
+        "duration": round(VideoMetadata.from_path(output_path).total_seconds, 2),
+        "transcript": transcript,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -941,7 +825,7 @@ def lesson_state(lesson: Lesson) -> dict:
     }
 
 
-SEGMENT_LABELS = ["Writing the next step", "Drawing an SVG frame per beat", "Stitching the frames into video"]
+SEGMENT_LABELS = ["Writing the next step", "Drawing and voicing each scene", "Stitching the scenes into video"]
 
 
 def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
@@ -950,22 +834,18 @@ def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
     job.advance(0, f"Step {index + 1} of {len(lesson.plan['steps'])}")
     scenes = build_step_scenes(lesson.plan, index)
 
-    job.advance(1, "Frame 1")
+    job.advance(1, f"{len(scenes['scenes'])} scenes to draw and voice")
     workdir = MEDIA_DIR / lesson.sid / f"step_{index}_work"
     out = MEDIA_DIR / lesson.sid / f"step_{index}.mp4"
 
-    def progress(i: int, total: int) -> None:
-        job.advance(1, f"Frame {i + 1} of {total}")
-
-    rendered = render_scenes(scenes["scenes"], workdir, out, progress)
-    job.advance(2, "Crossfading the frames together")
+    rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
+    job.advance(2, "Crossfading the scenes together")
 
     payload = {
         "index": index,
         "video_url": f"/media/{lesson.sid}/step_{index}.mp4",
         "duration": rendered["duration"],
         "transcript": rendered["transcript"],
-        "theme_note": scenes.get("theme_note", ""),
         "checkpoint": public_checkpoint(lesson.plan["checkpoints"][index], index),
     }
     lesson.segments[index] = payload
@@ -1020,8 +900,8 @@ def api_start():
     labels = [
         "Reading your problem",
         "Writing a similar problem and its steps",
-        "Drawing an SVG frame per beat",
-        "Stitching the frames into video",
+        "Drawing and voicing each scene",
+        "Stitching the scenes into video",
     ]
 
     def work(job: Job) -> dict:
@@ -1033,16 +913,13 @@ def api_start():
         job.advance(1, lesson.plan["original"]["subject"])
         time.sleep(0.2)  # let the checklist tick over visibly
 
-        job.advance(2, "Frame 1")
         workdir = MEDIA_DIR / lesson.sid / "step_0_work"
         out = MEDIA_DIR / lesson.sid / "step_0.mp4"
         scenes = build_step_scenes(lesson.plan, 0)
+        job.advance(2, f"{len(scenes['scenes'])} scenes to draw and voice")
 
-        def progress(i: int, total: int) -> None:
-            job.advance(2, f"Frame {i + 1} of {total}")
-
-        rendered = render_scenes(scenes["scenes"], workdir, out, progress)
-        job.advance(3, "Crossfading the frames together")
+        rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
+        job.advance(3, "Crossfading the scenes together")
         shutil.rmtree(workdir, ignore_errors=True)
 
         lesson.segments[0] = {
@@ -1050,8 +927,7 @@ def api_start():
             "video_url": f"/media/{lesson.sid}/step_0.mp4",
             "duration": rendered["duration"],
             "transcript": rendered["transcript"],
-            "theme_note": scenes.get("theme_note", ""),
-            "checkpoint": public_checkpoint(lesson.plan["checkpoints"][0], 0),
+                "checkpoint": public_checkpoint(lesson.plan["checkpoints"][0], 0),
         }
         return {"state": lesson_state(lesson), "segment": lesson.segments[0]}
 
@@ -1138,12 +1014,10 @@ def api_answer():
             stamp = lesson.attempts[index]
             workdir = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}_work"
             out = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}.mp4"
+            job.advance(1, f"{len(scenes['scenes'])} scenes to draw and voice")
 
-            def progress(i: int, total: int) -> None:
-                job.advance(1, f"Frame {i + 1} of {total}")
-
-            rendered = render_scenes(scenes["scenes"], workdir, out, progress)
-            job.advance(2, "Crossfading the frames together")
+            rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
+            job.advance(2, "Crossfading the scenes together")
             shutil.rmtree(workdir, ignore_errors=True)
 
             payload = {
@@ -1155,7 +1029,7 @@ def api_answer():
             lesson.misses[index] = payload
             return {"correction": payload}
 
-        labels = ["Working out where that came from", "Drawing it on your figure", "Stitching the frames into video"]
+        labels = ["Working out where that came from", "Drawing it on your figure", "Stitching the scenes into video"]
         response["correction_job"] = run_job(labels, work).payload()
 
     return jsonify(response)

@@ -43,20 +43,19 @@ fails fast — before spending a Claude call — with that same message on the p
 
 The first run downloads the three notebook typefaces (Lilita One, Patrick Hand,
 Caveat) into `static/fonts/` and registers them with fontconfig, so the generated
-video frames are typeset in the same hands as the interface. Offline, cairo
+video frames are typeset in the same hands as the interface. Offline, the renderer
 substitutes and everything still renders.
 
-Optional: `pip install "videopython[ai]"` (several GB — torch and friends) gives every
-scene a spoken narration track through videopython's `TextToSpeech`. Without it each
-frame carries its narration as an on-screen caption and the video is silent; the page
-shows the same lines as a live transcript beside the video either way.
+The `videopython[ai]` extra is **required**, not optional — the scene loop calls
+`TextToImage`, `ImageToVideo` and `TextToSpeech` from `videopython.ai`. It pulls in
+torch and friends (several GB) and wants a GPU to be tolerable.
 
 ---
 
 ## The pipeline
 
-Everything runs through `videopython` — the SVG frames are rasterised, turned into
-clips, and stitched by `VideoEdit` with the crossfades Claude picked.
+Claude produces the `scenes` list directly; the sample `create_ai_video` code then runs
+as given, with nothing in between.
 
 ```
 photo of the problem
@@ -72,24 +71,26 @@ photo of the problem
         ▼   for each step i
   ┌─────────────────────────────────────────────────────────────┐
   │ Claude                            build_step_scenes()       │
-  │  returns 2–4 scenes, each:                                  │
-  │    svg           a complete notebook frame                  │
-  │    narration     what the voice says over it                │
-  │    transition_in {type, duration} from videopython's        │
-  │                  curated xfade catalog — how this frame      │
-  │                  should flow out of the last one            │
+  │  returns the scenes list, each item exactly two keys:       │
+  │                                                             │
+  │    image_prompt  a complete SVG document written out as     │
+  │                  text, then a line starting                 │
+  │                  "TRANSITION TO NEXT SCENE:" saying how it  │
+  │                  should flow into the next scene's SVG      │
+  │    narration     what the voice says over that frame        │
   └─────────────────────────────────────────────────────────────┘
         │
-        ▼                                    render_scenes()
-   sanitize_svg → cairosvg → numpy frame
-        │
-        ▼
-   Video.from_image(...).add_audio(tts)  →  scene_i.mp4
+        ▼                                  create_ai_video()
+   TextToImage().generate_image(scene["image_prompt"])
+   ImageToVideo().generate_video(image=image)
+   TextToSpeech().generate_audio(scene["narration"])
+   video.add_audio(audio).save(f"{workdir}/scene_{i}.mp4")
         │
         ▼
    VideoEdit(segments=[SegmentConfig(source, start, end,
-                operations=[Resize(1280,720)],
-                transition_in=TransitionSpec(type, duration))])
+                operations=[Resize(width=1920, height=1080)],
+                transition_in=None if i == 0
+                              else TransitionSpec(type="dissolve", duration=1.0))])
         .run_to_file("step_i.mp4")
         │
         ▼
@@ -100,17 +101,15 @@ photo of the problem
                         showing the wrong move and why it breaks → try again
 ```
 
-Claude is asked for SVG rather than image prompts because the frames need to be
-*legible diagrams*, and because consecutive frames can then be near-identical apart
-from the new mark — which is exactly what makes a `dissolve` read as annotation
-appearing on a page rather than a slide change. The style rules in `SVG_STYLE_RULES`
-pin down the notebook substrate, the palette, the three type voices, and the
-continuity contract that the transition choice depends on.
+The SVG lives inside `image_prompt` rather than being rasterised separately, so the
+frames are legible diagrams and each one carries its own instructions for how it should
+become the next. `SVG_STYLE_RULES` pins down the notebook substrate, the palette, the
+three type voices, and that transition contract.
 
 ## Layout
 
 ```
-app.py                 everything: config, Claude calls, SVG → video, jobs, routes
+app.py                 everything: config, Claude calls, the scene pipeline, jobs, routes
 templates/index.html   the notebook — the whole interface and its state machine
 static/sample-problem.png
 static/fonts/          fetched on first run
@@ -131,17 +130,18 @@ media/<session>/       generated videos and uploads (in-memory sessions, ephemer
 
 Correct answers, `target` values, affirmations and explanations never reach the
 browser — `public_checkpoint()` strips them and `/api/answer` marks server-side.
-Claude's SVG is rasterised server-side and never enters the page DOM; `sanitize_svg()`
-strips scripting and off-canvas references before cairosvg sees it.
+Claude's SVG only ever travels inside an `image_prompt` on the server; it never enters
+the page DOM.
 
 ## What is deliberately unfinished
 
 - **Sessions live in memory.** A restart empties them; the media on disk is orphaned.
   Fine for the prototype, wrong for anything else.
-- **Reasoning accuracy is validated on geometry only.** The pipeline is
-  subject-agnostic by construction, but nothing checks Claude's arithmetic beyond
-  the checkpoint disagreement itself.
 - **No auth, no rate limiting, one hardcoded key.** `app.run()` is the dev server.
-- **Generation is slow** — roughly 20–60s for the plan plus the first segment,
-  then 15–40s per subsequent step. The next step is prefetched while the student
-  reads their ✓, so most of that is hidden; the first build is not.
+- **Generation is slow.** Each scene runs a diffusion image model, an image-to-video
+  model and a TTS model, and `create_ai_video` constructs all three per segment exactly
+  as the sample does — so the models reload every time. Hoisting them to module scope is
+  a one-line change if the reload cost bites.
+- **Reasoning accuracy is validated on geometry only.** The pipeline is subject-agnostic
+  by construction, but nothing checks Claude's arithmetic beyond the checkpoint
+  disagreement itself.
