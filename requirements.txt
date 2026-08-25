@@ -1,14 +1,9 @@
 # TUTORial — Flask prototype
 #
-# System requirement: ffmpeg AND ffprobe must be on PATH (videopython shells out
-# to both).  macOS:  brew install ffmpeg
-#         Debian/Ubuntu:  apt-get install -y --no-install-recommends ffmpeg
+# No system dependencies. Video generation happens in Sora, so there is no
+# ffmpeg, no local rendering and no GPU to provision.
 
 Flask>=3.0
-anthropic>=1.0
+anthropic>=1.0             # the lesson plan, the flipbook SVGs, the checkpoints
+openai>=3.0                # Sora animates the flipbook into each video segment
 requests>=2.31             # only used to fetch the notebook fonts on first run
-
-# The video pipeline. The [ai] extra is REQUIRED, not optional: the scene loop
-# calls TextToImage, ImageToVideo and TextToSpeech from videopython.ai. It pulls
-# in torch and friends (several GB) and wants a GPU to be tolerable.
-videopython[ai]>=0.55

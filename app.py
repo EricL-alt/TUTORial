@@ -4,18 +4,18 @@ TUTORial — a notebook that quizzes you back.
 A student photographs a problem they are stuck on. Claude reads it, invents a
 *similar* problem, decomposes that similar problem into steps, and writes one
 checkpoint question per step about the student's ORIGINAL problem. Each step is
-then drawn as a short series of SVG scenes, rasterised, and stitched by
-videopython into a video segment that plays up to the next checkpoint and stops.
+then drawn as a flipbook of SVG keyframes, which Sora animates into one seamless
+video segment that plays up to the next checkpoint and stops.
 
 The student cannot advance until they produce the step themselves. A wrong
 answer generates a second video that diagnoses the mistake on their own problem
 and sends them back to try again.
 
-Everything lives in this one file: config, the Claude calls, the SVG renderer,
-the videopython pipeline, the background job runner, and the Flask routes.
+Everything lives in this one file: config, the Claude calls, the Sora call, the
+background job runner, and the Flask routes.
 
 Run:
-    pip install -r requirements.txt      # ffmpeg + ffprobe must be on PATH
+    pip install -r requirements.txt
     python app.py                        # http://127.0.0.1:5000
 """
 
@@ -28,7 +28,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import traceback
@@ -46,11 +45,16 @@ from werkzeug.utils import secure_filename
 # ─────────────────────────────────────────────────────────────────────────────
 
 ANTHROPIC_API_KEY = "sk-ant-REPLACE-WITH-YOUR-KEY"
+OPENAI_API_KEY = "sk-proj-REPLACE-WITH-YOUR-KEY"
 
 MODEL = "claude-opus-5"
 
+SORA_MODEL = "sora-2"        # or "sora-2-pro"
+SORA_SECONDS = "12"          # the API accepts "4", "8" or "12"
+SORA_SIZE = "1280x720"       # landscape, to match the taped-in player
+
 CHECKPOINT_COUNT = 6          # the video stops this many times
-SCENES_PER_STEP = (2, 4)      # scenes Claude writes per step
+FRAMES_PER_STEP = (3, 5)      # flipbook keyframes Claude draws per step
 
 BASE_DIR = Path(__file__).resolve().parent
 MEDIA_DIR = BASE_DIR / "media"
@@ -68,49 +72,6 @@ PALETTE = {
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FFMPEG — videopython calls `ffmpeg` and `ffprobe` as bare argv names and offers
-# no path override, so both must be on PATH: Video.save() encodes with one and
-# VideoMetadata.from_path() probes with the other. A GUI launcher (PyCharm, an IDE
-# run configuration) often starts Python without the login shell's PATH, so an
-# already-installed ffmpeg can still be invisible — look for it before giving up.
-# ─────────────────────────────────────────────────────────────────────────────
-
-FFMPEG_HINTS = ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/snap/bin")
-
-FFMPEG_HELP = (
-    "ffmpeg and ffprobe are required to render video and are not on PATH. "
-    + (
-        "Install with: brew install ffmpeg"
-        if sys.platform == "darwin"
-        else "Install with: sudo apt-get install -y --no-install-recommends ffmpeg"
-    )
-    + ". If you installed it already, your editor may be launching Python without your "
-      "shell's PATH — restart it from a terminal, or add the install directory to the "
-      "run configuration's environment."
-)
-
-
-def ensure_ffmpeg() -> bool:
-    """True once both binaries are reachable, repairing PATH if we can find them."""
-    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
-        return True
-    for folder in FFMPEG_HINTS:
-        # Only a directory holding *both* qualifies — half a pair is exactly the
-        # confusing half-working failure this is meant to prevent.
-        if (Path(folder) / "ffmpeg").exists() and (Path(folder) / "ffprobe").exists():
-            os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
-            warn_once("ffmpeg", f"found in {folder}; added to PATH for this process")
-            return True
-    return False
-
-
-def require_ffmpeg() -> None:
-    """Guard the expensive paths. The job runner forwards this message to the page."""
-    if not ensure_ffmpeg():
-        raise RuntimeError(FFMPEG_HELP)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -243,21 +204,26 @@ def image_block(path: Path) -> dict:
 # ── Prompts ──────────────────────────────────────────────────────────────────
 
 SVG_STYLE_RULES = f"""
-Each scene's `image_prompt` is not a description of a picture — it IS a complete SVG
-document written out as text, followed by directions for how that frame should flow
-into the next scene's SVG. Write the SVG first, then the directions, in one string.
+You draw a FLIPBOOK. Each frame is a complete SVG document — the exact artwork for one
+moment of the page — and consecutive frames are the SAME page with one thing added.
+Those frames are handed to a video model that animates between them, so the difference
+between one frame and the next IS the animation.
 
 THE SVG
-- Root tag: <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"
-  viewBox="0 0 1920 1080"> ... </svg>
+- Root tag: <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"
+  viewBox="0 0 1280 720"> ... </svg>
 - Self-contained vector shapes and text only. No <script>, no <foreignObject>, no
   external images, no href to anything off-canvas, no markdown fences around it.
+- Keep each frame COMPACT. Every frame is sent as text in one prompt, so a wall of
+  needless elements crowds out the ones that matter. Aim for well under 2000 characters
+  per frame: the diagram, the labels, the line of work, the caption. Nothing decorative
+  that does not carry meaning.
 
-SUBSTRATE (identical on every frame, so the page never jumps)
+SUBSTRATE (byte-for-byte identical on every frame, so the page never jumps)
 - Full-bleed cream sheet: <rect> filling the canvas in {PALETTE['paper']}.
-- Ruled blue lines every 50px in {PALETTE['rule']}, starting at y=120.
-- A double pink margin rule down the left at x=144 and x=153 in {PALETTE['margin']}.
-- Three punched holes down the left gutter at x=72, y=180 / 540 / 900, r=19,
+- Ruled blue lines every 34px in {PALETTE['rule']}, starting at y=78.
+- A double pink margin rule down the left at x=96 and x=102 in {PALETTE['margin']}.
+- Three punched holes down the left gutter at x=48, y=120 / 360 / 600, r=13,
   fill {PALETTE['sky']} at low opacity.
 
 PALETTE — use these and nothing else
@@ -269,70 +235,69 @@ TYPE — three voices, never mixed up
 - font-family="Lilita One, sans-serif" for headlines and stamped labels. ALL CAPS, chunky.
 - font-family="Patrick Hand, cursive" for body text and worked math.
 - font-family="Caveat, cursive" for margin asides and annotations.
-- Body text is never smaller than 38px. Headlines are 66-96px.
+- Body text is never smaller than 26px. Headlines are 44-64px.
 
 PHYSICAL VOCABULARY — this is what makes it read as paper, not as a slide
-- Cards are placed on the page: a hard offset shadow (a duplicate <rect> nudged 4px right
-  and 6px down in a tint), never a blur filter.
-- Everything sits at a sub-degree angle: transform="rotate(-0.6 960 540)" and similar.
+- Cards are placed on the page: a hard offset shadow (a duplicate <rect> nudged 3px right
+  and 4px down in a tint), never a blur filter.
+- Everything sits at a sub-degree angle: transform="rotate(-0.6 640 360)" and similar.
 - Highlighter swipes behind key phrases: a <rect> in {PALETTE['yellow']} behind the text,
   not a solid fill over it.
-- Sticky notes get a torn corner: a <path> polygon with the top-right corner cut off.
-- Washi tape holding a card down: a translucent <rect> rotated a few degrees across its edge.
 - Labels are stamped in a flagged tag box: a filled rect with a triangle point on its right edge.
 
 LAYOUT AND LEGIBILITY
-- Keep all content inside x from 200 to 1770 and y from 110 to 990. Nothing touches an edge.
-- One idea per frame. Large, few elements, generous whitespace. This is a video, not a poster.
+- Keep all content inside x from 132 to 1180 and y from 70 to 660. Nothing touches an edge.
+- One idea per frame. Large, few elements, generous whitespace.
 - Every frame carries its own narration as a caption strip along the bottom (y around
-  900-990) in Patrick Hand at 42px on a cream card, so the video is followable with the sound
-  off. Wrap it yourself across <tspan x="..." dy="50"> lines — SVG does not wrap text.
+  600-660) in Patrick Hand at 28px on a cream card, so the video is followable with the
+  sound off. Wrap it yourself across <tspan x="..." dy="34"> lines — SVG does not wrap text.
 - Math is drawn, not described: draw the triangle, label the sides, show the proportion as
   laid-out text with the numbers in place.
 
-THE TRANSITION DIRECTIONS — appended after the SVG, inside the same string
-- After the closing </svg>, write a line beginning `TRANSITION TO NEXT SCENE:` and then say,
-  in plain words, how this frame should become the next one: what stays fixed on the page,
-  what is added, and what should fade in where. Name the elements.
-- Frames within one step share a layout. Keep the diagram in the same place at the same size
-  from frame to frame and change only what the step is adding — a new label, a highlighted
-  side, a line of work appearing below the last. The crossfade then reads as annotation
-  appearing on a page rather than a slide change, so say exactly that.
-- On the LAST scene of the segment write:
-  `TRANSITION TO NEXT SCENE: none — final frame before the student takes over.`
+THE FLIPBOOK RULE — the most important one
+- Frame 1 establishes the page. Every later frame REPEATS frame 1's elements unchanged,
+  at identical coordinates, and ADDS the one new mark that this beat is about — a label,
+  a highlighted side, the next line of work appearing below the last.
+- Never move, resize or restyle something that is already on the page. Never remove
+  anything. The page only ever accumulates.
+- That way the animator has exactly one difference to draw per beat, and the result reads
+  as a hand writing on one continuous page.
 """
 
 SCENE_SCHEMA = {
     "type": "object",
     "properties": {
-        "scenes": {
+        "frames": {
             "type": "array",
             "description": (
-                f"{SCENES_PER_STEP[0]}-{SCENES_PER_STEP[1]} scenes, in order. "
+                f"{FRAMES_PER_STEP[0]}-{FRAMES_PER_STEP[1]} flipbook keyframes, in order. "
                 "Structured outputs cannot bound array length, so hold to that range yourself."
             ),
             "items": {
                 "type": "object",
                 "properties": {
-                    "image_prompt": {
+                    "svg": {
                         "type": "string",
-                        "description": (
-                            "A complete SVG document as text, then a line starting "
-                            "'TRANSITION TO NEXT SCENE:' describing how it flows into "
-                            "the next scene's SVG."
-                        ),
+                        "description": "A complete, self-contained SVG document for this keyframe.",
                     },
                     "narration": {
                         "type": "string",
-                        "description": "What the voice says over this frame. 1-3 sentences, spoken register.",
+                        "description": "What the voice says over this frame. 1-2 sentences, spoken register.",
                     },
                 },
-                "required": ["image_prompt", "narration"],
+                "required": ["svg", "narration"],
                 "additionalProperties": False,
             },
         },
+        "closing": {
+            "type": "string",
+            "description": (
+                "One sentence for the video model about how the final beat should land, "
+                "e.g. 'the YOUR TURN card settles onto the page and everything holds still'."
+            ),
+        },
     },
-    "required": ["scenes"],
+    "required": ["frames", "closing"],
     "additionalProperties": False,
 }
 
@@ -516,16 +481,17 @@ def normalize_plan(plan: dict) -> dict:
     return plan
 
 
-def normalize_scenes(payload: dict) -> dict:
+def normalize_frames(payload: dict) -> dict:
     """Drop anything unusable; the array length is not enforced on the wire."""
-    scenes = []
-    for scene in payload.get("scenes") or []:
-        prompt = str(scene.get("image_prompt") or "").strip()
-        if prompt:
-            scenes.append({"image_prompt": prompt, "narration": str(scene.get("narration") or "")})
-    if not scenes:
-        raise ValueError("Claude returned no usable scenes for this step.")
-    payload["scenes"] = scenes
+    frames = []
+    for frame in payload.get("frames") or []:
+        svg = str(frame.get("svg") or "").strip()
+        if "<svg" in svg:
+            frames.append({"svg": svg, "narration": str(frame.get("narration") or "")})
+    if not frames:
+        raise ValueError("Claude returned no usable keyframes for this step.")
+    payload["frames"] = frames
+    payload["closing"] = str(payload.get("closing") or "the page holds still on the final frame.")
     return payload
 
 
@@ -582,11 +548,11 @@ Do not answer that question, hint at its answer, or show their problem's numbers
 is the handoff: a stamped "YOUR TURN" card that tells them to take this same move over to their
 own problem. It must not restate the question — the interface asks it.
 
-Write {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} scenes: the step being made on the similar
+Write {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} scenes: the step being made on the similar
 problem, then the handoff. Each scene is one `image_prompt` — the SVG for that frame followed by
 its TRANSITION TO NEXT SCENE line — and one `narration`."""
 
-    return normalize_scenes(ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000))
+    return normalize_frames(ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000))
 
 
 def build_miss_scenes(plan: dict, index: int, given: str, misconception: str,
@@ -610,7 +576,7 @@ They answered: {given}
 The wrong move that produces that answer: {misconception or 'not identified — diagnose it yourself'}
 Why the right answer is right: {checkpoint['explanation']}
 
-Write {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} scenes, working on THEIR problem, not the similar one:
+Write {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} scenes, working on THEIR problem, not the similar one:
 1. Show their figure with the move they made drawn on it — make the wrong step visible, not just named.
 2. Show the thing that breaks. Follow their move to where it contradicts something already on the page.
 3. Point at the one idea that fixes it, WITHOUT completing the step for them.
@@ -619,7 +585,7 @@ Write {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} scenes, working on THEIR probl
 Be kind and specific. Never say "you should know this", never call the mistake careless, and never
 give away the answer — they are about to attempt it again."""
 
-    return normalize_scenes(ask_json(
+    return normalize_frames(ask_json(
         system,
         [image_block(problem_image), {"type": "text", "text": user}],
         SCENE_SCHEMA,
@@ -648,12 +614,12 @@ THE STUDENT WROTE: {given}"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENES → VIDEO
+# SCENES → VIDEO (Sora)
 #
-# The sample pipeline, used as given. Claude supplies the `scenes` list — each
-# item an `image_prompt` (an SVG document as text, plus directions for flowing
-# into the next one) and a `narration` — and nothing sits between that list and
-# videopython.
+# Claude draws the step as a flipbook: a handful of SVG keyframes, each with the
+# narration that plays over it. All of it goes into a single Sora prompt as text,
+# and Sora animates between the keyframes into one seamless segment. No local
+# rendering, no ffmpeg, nothing between Claude's frames and the finished MP4.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _warned: set[str] = set()
@@ -665,59 +631,101 @@ def warn_once(key: str, message: str) -> None:
         print(f"[{key}] {message}")
 
 
-def create_ai_video(scenes: list[dict], output_path: str, workdir: str = "scenes") -> dict:
-    """One lesson segment, from Claude's scenes to a finished MP4."""
-    require_ffmpeg()
+_openai_lock = threading.Lock()
+_openai = None
 
-    from videopython.ai import TextToImage, ImageToVideo, TextToSpeech
-    from videopython.base.video import VideoMetadata
-    from videopython.editing import VideoEdit, SegmentConfig, TransitionSpec, Resize
 
-    image_gen, video_gen, speech_gen = TextToImage(), ImageToVideo(), TextToSpeech()
+def sora():
+    global _openai
+    with _openai_lock:
+        if _openai is None:
+            import openai
+            if "REPLACE-WITH-YOUR-KEY" in OPENAI_API_KEY:
+                raise RuntimeError(
+                    "Set OPENAI_API_KEY at the top of app.py to your OpenAI API key."
+                )
+            _openai = openai.OpenAI(api_key=OPENAI_API_KEY, timeout=900.0)
+    return _openai
 
-    Path(workdir).mkdir(parents=True, exist_ok=True)
-    scene_paths = []
-    for i, scene in enumerate(scenes):
-        image = image_gen.generate_image(scene["image_prompt"])
-        video = video_gen.generate_video(image=image)
-        audio = speech_gen.generate_audio(scene["narration"])
-        path = f"{workdir}/scene_{i}.mp4"
-        video.add_audio(audio).save(path)
-        scene_paths.append(path)
 
-    # One segment per scene. Resize standardizes to 1080p; a 1s dissolve crossfades
-    # each follow-on scene in (the first has no predecessor, so it carries none).
-    segments = []
-    for i, path in enumerate(scene_paths):
-        meta = VideoMetadata.from_path(path)
-        segments.append(SegmentConfig(
-            source=path,
-            start=0,
-            end=meta.total_seconds,
-            operations=[Resize(width=1920, height=1080)],
-            transition_in=None if i == 0 else TransitionSpec(type="dissolve", duration=1.0),
-        ))
+def build_sora_prompt(frames: list[dict], closing: str) -> str:
+    """The flipbook, laid out as text for Sora: every keyframe's SVG and its line."""
+    total = len(frames)
+    parts = [
+        "Animate this hand-drawn flipbook into ONE seamless, continuous video.",
+        "",
+        f"You are given {total} keyframes in order. Each keyframe is a complete SVG "
+        "document given as text, together with the narration spoken over it. The SVG is "
+        "the exact artwork for that moment — reproduce its layout, its shapes, its "
+        "wording and its colours faithfully.",
+        "",
+        "HOW TO ANIMATE",
+        "- The subject is a single sheet of cream school-notebook paper, ruled in pale "
+        "blue, seen straight on and filling the frame. The camera never moves.",
+        "- Hold each keyframe long enough to read it, then move to the next.",
+        "- Consecutive keyframes are the SAME page with something added. Never cut and "
+        "never slide the page. Animate the difference only: new strokes, labels and "
+        "numbers draw themselves onto the page as if a hand were writing them, and "
+        "highlighter sweeps across in one motion. Everything already on the page stays "
+        "exactly where it is, at the same size.",
+        "- The result must read as one continuous take of a page being worked on, not as "
+        "a slideshow of separate images.",
+        f"- Total length: about {SORA_SECONDS} seconds, paced evenly across the {total} keyframes.",
+        "",
+        "DO NOT add photographic detail, hands, faces, desks, rooms, logos, watermarks or "
+        "any text that is not in the SVGs. Flat vector artwork on paper, nothing else.",
+        "",
+        f"CLOSING BEAT: {closing}",
+        "",
+        "=" * 60,
+    ]
+    for i, frame in enumerate(frames, 1):
+        parts += [
+            "",
+            f"KEYFRAME {i} OF {total}",
+            f'NARRATION: "{frame["narration"]}"',
+            "SVG:",
+            frame["svg"],
+            "",
+            "-" * 60,
+        ]
+    return "\n".join(parts)
 
-    VideoEdit(segments=segments).run_to_file(output_path)
 
-    # Where each narration line lands on the assembled timeline, so the page can
-    # follow along in text. Read off the same segments the edit was built from.
-    transcript, cursor = [], 0.0
-    for i, segment in enumerate(segments):
-        overlap = segment.transition_in.duration if segment.transition_in else 0.0
-        cursor = max(0.0, cursor - overlap)
-        length = segment.end - segment.start
-        transcript.append({
-            "start": round(cursor, 2),
-            "end": round(cursor + length, 2),
-            "text": scenes[i]["narration"],
-        })
-        cursor += length
+def create_sora_video(frames: list[dict], output_path: str, closing: str,
+                      on_progress=None) -> dict:
+    """Send the flipbook to Sora and save the finished segment."""
+    prompt = build_sora_prompt(frames, closing)
+    warn_once("sora", f"prompt is {len(prompt)} characters across {len(frames)} keyframes")
 
-    return {
-        "duration": round(VideoMetadata.from_path(output_path).total_seconds, 2),
-        "transcript": transcript,
-    }
+    video = sora().videos.create(
+        model=SORA_MODEL,
+        prompt=prompt,
+        seconds=SORA_SECONDS,
+        size=SORA_SIZE,
+    )
+
+    while video.status in ("queued", "in_progress"):
+        if on_progress:
+            on_progress(video.status, video.progress or 0)
+        time.sleep(4)
+        video = sora().videos.retrieve(video.id)
+
+    if video.status != "completed":
+        detail = getattr(video.error, "message", None) or video.status
+        raise RuntimeError(f"Sora could not render this step: {detail}")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    sora().videos.download_content(video.id, variant="video").write_to_file(output_path)
+
+    # Narration is paced evenly across the clip, so the page can follow along in text.
+    seconds = float(video.seconds or SORA_SECONDS)
+    span = seconds / max(1, len(frames))
+    transcript = [
+        {"start": round(i * span, 2), "end": round((i + 1) * span, 2), "text": f["narration"]}
+        for i, f in enumerate(frames)
+    ]
+    return {"duration": round(seconds, 2), "transcript": transcript, "video_id": video.id}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -825,21 +833,20 @@ def lesson_state(lesson: Lesson) -> dict:
     }
 
 
-SEGMENT_LABELS = ["Writing the next step", "Drawing and voicing each scene", "Stitching the scenes into video"]
+SEGMENT_LABELS = ["Writing the next step", "Drawing the flipbook", "Sora animating the page"]
 
 
 def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
     """Claude draws step `index` as SVG scenes; videopython stitches them."""
-    require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
     job.advance(0, f"Step {index + 1} of {len(lesson.plan['steps'])}")
     scenes = build_step_scenes(lesson.plan, index)
 
-    job.advance(1, f"{len(scenes['scenes'])} scenes to draw and voice")
-    workdir = MEDIA_DIR / lesson.sid / f"step_{index}_work"
     out = MEDIA_DIR / lesson.sid / f"step_{index}.mp4"
-
-    rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
-    job.advance(2, "Crossfading the scenes together")
+    job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
+    rendered = create_sora_video(
+        scenes["frames"], str(out), scenes["closing"],
+        lambda status, pct: job.advance(2, f"Sora {status.replace('_', ' ')} — {pct}%"),
+    )
 
     payload = {
         "index": index,
@@ -849,7 +856,6 @@ def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
         "checkpoint": public_checkpoint(lesson.plan["checkpoints"][index], index),
     }
     lesson.segments[index] = payload
-    shutil.rmtree(workdir, ignore_errors=True)
     return payload
 
 
@@ -900,12 +906,11 @@ def api_start():
     labels = [
         "Reading your problem",
         "Writing a similar problem and its steps",
-        "Drawing and voicing each scene",
-        "Stitching the scenes into video",
+        "Drawing the flipbook",
+        "Sora animating the page",
     ]
 
     def work(job: Job) -> dict:
-        require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
         job.advance(0, "Looking at your image")
         lesson.plan = normalize_plan(build_plan(lesson.image))
         lesson.status = [0] * len(lesson.plan["checkpoints"])
@@ -913,14 +918,13 @@ def api_start():
         job.advance(1, lesson.plan["original"]["subject"])
         time.sleep(0.2)  # let the checklist tick over visibly
 
-        workdir = MEDIA_DIR / lesson.sid / "step_0_work"
         out = MEDIA_DIR / lesson.sid / "step_0.mp4"
         scenes = build_step_scenes(lesson.plan, 0)
-        job.advance(2, f"{len(scenes['scenes'])} scenes to draw and voice")
-
-        rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
-        job.advance(3, "Crossfading the scenes together")
-        shutil.rmtree(workdir, ignore_errors=True)
+        job.advance(2, f"{len(scenes['frames'])} keyframes drawn")
+        rendered = create_sora_video(
+            scenes["frames"], str(out), scenes["closing"],
+            lambda status, pct: job.advance(3, f"Sora {status.replace('_', ' ')} — {pct}%"),
+        )
 
         lesson.segments[0] = {
             "index": 0,
@@ -1007,18 +1011,16 @@ def api_answer():
     if not correct:
         # A wrong answer earns its own video: their problem, their wrong move.
         def work(job: Job) -> dict:
-            require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
             job.advance(0, "Working out where that came from")
             scenes = build_miss_scenes(lesson.plan, index, given_text, misconception, lesson.image)
 
             stamp = lesson.attempts[index]
-            workdir = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}_work"
             out = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}.mp4"
-            job.advance(1, f"{len(scenes['scenes'])} scenes to draw and voice")
-
-            rendered = create_ai_video(scenes["scenes"], str(out), str(workdir))
-            job.advance(2, "Crossfading the scenes together")
-            shutil.rmtree(workdir, ignore_errors=True)
+            job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
+            rendered = create_sora_video(
+                scenes["frames"], str(out), scenes["closing"],
+                lambda status, pct: job.advance(2, f"Sora {status.replace('_', ' ')} — {pct}%"),
+            )
 
             payload = {
                 "index": index,
@@ -1029,7 +1031,7 @@ def api_answer():
             lesson.misses[index] = payload
             return {"correction": payload}
 
-        labels = ["Working out where that came from", "Drawing it on your figure", "Stitching the scenes into video"]
+        labels = ["Working out where that came from", "Drawing it on your figure", "Sora animating the page"]
         response["correction_job"] = run_job(labels, work).payload()
 
     return jsonify(response)
@@ -1121,9 +1123,4 @@ if __name__ == "__main__":
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     ensure_fonts()
-    if not ensure_ffmpeg():
-        bar = "━" * 78
-        print(f"\n{bar}\n  CANNOT RENDER VIDEO\n\n  {FFMPEG_HELP}\n\n"
-              f"  The server still starts, and the research pages still read, but every\n"
-              f"  lesson will fail until this is fixed.\n{bar}\n")
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)), debug=False, threaded=True)
