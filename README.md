@@ -19,8 +19,11 @@ case; **Works Cited** carries the 30 sources in MLA 9th.
 ## Running it
 
 ```bash
-# ffmpeg AND ffprobe must be on PATH — videopython shells out to both
-sudo apt-get install -y --no-install-recommends ffmpeg     # or: brew install ffmpeg
+# ffmpeg AND ffprobe must both be on PATH — videopython calls them as bare names
+# and offers no path override. Video.save() encodes with one, VideoMetadata.from_path()
+# probes with the other, so half a pair is not enough.
+brew install ffmpeg                                        # macOS
+sudo apt-get install -y --no-install-recommends ffmpeg      # Debian/Ubuntu
 
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -30,6 +33,13 @@ pip install -r requirements.txt
 
 python app.py            # http://127.0.0.1:5000
 ```
+
+**Running from an IDE?** PyCharm and friends often launch Python without your login
+shell's `PATH`, so an ffmpeg you already installed can still be invisible. On startup
+the app checks the usual install directories (`/opt/homebrew/bin`, `/usr/local/bin`,
+…) and repairs `PATH` for its own process if it finds both binaries there. If it
+can't, it prints an unmissable banner with the install command, and every lesson
+fails fast — before spending a Claude call — with that same message on the page.
 
 The first run downloads the three notebook typefaces (Lilita One, Patrick Hand,
 Caveat) into `static/fonts/` and registers them with fontconfig, so the generated

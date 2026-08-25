@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -80,6 +81,49 @@ PALETTE = {
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FFMPEG — videopython calls `ffmpeg` and `ffprobe` as bare argv names and offers
+# no path override, so both must be on PATH: Video.save() encodes with one and
+# VideoMetadata.from_path() probes with the other. A GUI launcher (PyCharm, an IDE
+# run configuration) often starts Python without the login shell's PATH, so an
+# already-installed ffmpeg can still be invisible — look for it before giving up.
+# ─────────────────────────────────────────────────────────────────────────────
+
+FFMPEG_HINTS = ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/snap/bin")
+
+FFMPEG_HELP = (
+    "ffmpeg and ffprobe are required to render video and are not on PATH. "
+    + (
+        "Install with: brew install ffmpeg"
+        if sys.platform == "darwin"
+        else "Install with: sudo apt-get install -y --no-install-recommends ffmpeg"
+    )
+    + ". If you installed it already, your editor may be launching Python without your "
+      "shell's PATH — restart it from a terminal, or add the install directory to the "
+      "run configuration's environment."
+)
+
+
+def ensure_ffmpeg() -> bool:
+    """True once both binaries are reachable, repairing PATH if we can find them."""
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        return True
+    for folder in FFMPEG_HINTS:
+        # Only a directory holding *both* qualifies — half a pair is exactly the
+        # confusing half-working failure this is meant to prevent.
+        if (Path(folder) / "ffmpeg").exists() and (Path(folder) / "ffprobe").exists():
+            os.environ["PATH"] = folder + os.pathsep + os.environ.get("PATH", "")
+            warn_once("ffmpeg", f"found in {folder}; added to PATH for this process")
+            return True
+    return False
+
+
+def require_ffmpeg() -> None:
+    """Guard the expensive paths. The job runner forwards this message to the page."""
+    if not ensure_ffmpeg():
+        raise RuntimeError(FFMPEG_HELP)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,6 +481,86 @@ Rules for the checkpoints:
 Write like a good tutor talking, not like a textbook."""
 
 
+# ── Normalizing what comes back ──────────────────────────────────────────────
+# Structured outputs cannot bound array length, so the counts asked for in the
+# prompts are not enforced on the wire. The routes consume `steps` and
+# `checkpoints` independently, so a length mismatch would raise IndexError several
+# minutes and several video renders into a lesson. Reconcile it up front instead:
+# run the lesson at whatever length actually came back.
+
+_CHECKPOINT_TEXT_FIELDS = ("title", "prompt", "target", "placeholder", "hint", "affirm", "explanation")
+
+
+def normalize_plan(plan: dict) -> dict:
+    """Make the plan safe for every route to index, and self-consistent in length."""
+    steps = list(plan.get("steps") or [])
+    checkpoints = list(plan.get("checkpoints") or [])
+    n = min(len(steps), len(checkpoints))
+    if n == 0:
+        raise ValueError(
+            "The lesson came back with no steps or no checkpoints. "
+            "Try again, or upload a clearer photo of the problem."
+        )
+    if len(steps) != n or len(checkpoints) != n:
+        warn_once("plan", f"asked for {CHECKPOINT_COUNT} steps, got "
+                          f"{len(steps)} steps / {len(checkpoints)} checkpoints — running {n}")
+    plan["steps"], plan["checkpoints"] = steps[:n], checkpoints[:n]
+
+    for i, step in enumerate(plan["steps"]):
+        step.setdefault("title", f"Step {i + 1}")
+        step.setdefault("short_title", f"step {i + 1}")
+        for field_name in ("teach", "work"):
+            step.setdefault(field_name, "")
+
+    for checkpoint in plan["checkpoints"]:
+        for field_name in _CHECKPOINT_TEXT_FIELDS:
+            checkpoint[field_name] = str(checkpoint.get(field_name) or "")
+
+        if checkpoint.get("type") not in ("mcq", "text"):
+            checkpoint["type"] = "text"
+
+        if checkpoint["type"] == "mcq":
+            # api_answer indexes options by the chosen letter, so there must be four.
+            options = [str(o) for o in (checkpoint.get("options") or [])][:4]
+            options += [""] * (4 - len(options))
+            checkpoint["options"] = options
+            try:
+                correct = int(checkpoint.get("correct_index", 0))
+            except (TypeError, ValueError):
+                correct = 0
+            checkpoint["correct_index"] = correct if 0 <= correct < 4 else 0
+        else:
+            checkpoint["options"] = []
+            checkpoint["correct_index"] = -1
+
+    for key in ("original", "similar"):
+        plan.setdefault(key, {})
+    return plan
+
+
+def normalize_scenes(payload: dict) -> dict:
+    """Same guard for the scene payload: the array bounds are not enforced either."""
+    scenes = [s for s in (payload.get("scenes") or []) if (s.get("svg") or "").strip()]
+    if not scenes:
+        raise ValueError("Claude returned no drawable frames for this step.")
+
+    for i, scene in enumerate(scenes):
+        scene["narration"] = str(scene.get("narration") or "")
+        if i == 0:
+            scene["transition_in"] = None  # nothing precedes the opening frame
+            continue
+        transition = scene.get("transition_in") or {}
+        try:
+            seconds = float(transition.get("duration", 0.8))
+        except (TypeError, ValueError):
+            seconds = 0.8
+        transition["duration"] = max(0.3, min(2.0, seconds or 0.8))
+        scene["transition_in"] = transition
+
+    payload["scenes"] = scenes
+    return payload
+
+
 def build_plan(problem_image: Path) -> dict:
     return ask_json(
         system=PLAN_SYSTEM,
@@ -493,7 +617,7 @@ own problem. It must not restate the question — the interface asks it.
 Draw {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} frames: the step being made on the similar
 problem, then the handoff. Give each frame its narration and its crossfade in."""
 
-    return ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000)
+    return normalize_scenes(ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000))
 
 
 def build_miss_scenes(plan: dict, index: int, given: str, misconception: str,
@@ -526,12 +650,12 @@ Draw {SCENES_PER_STEP[0]}–{SCENES_PER_STEP[1]} frames, working on THEIR proble
 Be kind and specific. Never say "you should know this", never call the mistake careless, and never
 give away the answer — they are about to attempt it again."""
 
-    return ask_json(
+    return normalize_scenes(ask_json(
         system,
         [image_block(problem_image), {"type": "text", "text": user}],
         SCENE_SCHEMA,
         max_tokens=32000,
-    )
+    ))
 
 
 def grade_free_text(plan: dict, index: int, given: str) -> dict:
@@ -632,6 +756,7 @@ def render_scenes(scenes: list[dict], workdir: Path, out_path: Path,
     """Claude's SVG scenes → one stitched MP4, exactly the sample pipeline:
     a clip per scene, then one VideoEdit with a crossfade into each follow-on.
     """
+    require_ffmpeg()
     from videopython.base.video import Video, VideoMetadata
     from videopython.editing import Resize, SegmentConfig, TransitionSpec, VideoEdit
 
@@ -821,6 +946,7 @@ SEGMENT_LABELS = ["Writing the next step", "Drawing an SVG frame per beat", "Sti
 
 def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
     """Claude draws step `index` as SVG scenes; videopython stitches them."""
+    require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
     job.advance(0, f"Step {index + 1} of {len(lesson.plan['steps'])}")
     scenes = build_step_scenes(lesson.plan, index)
 
@@ -899,8 +1025,9 @@ def api_start():
     ]
 
     def work(job: Job) -> dict:
+        require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
         job.advance(0, "Looking at your image")
-        lesson.plan = build_plan(lesson.image)
+        lesson.plan = normalize_plan(build_plan(lesson.image))
         lesson.status = [0] * len(lesson.plan["checkpoints"])
 
         job.advance(1, lesson.plan["original"]["subject"])
@@ -968,7 +1095,8 @@ def api_answer():
         except (TypeError, ValueError):
             abort(400, "pick an option")
         correct = chosen == int(checkpoint["correct_index"])
-        given_text = (checkpoint.get("options") or ["", "", "", ""])[chosen] if 0 <= chosen < 4 else str(given)
+        options = checkpoint.get("options") or []
+        given_text = options[chosen] if 0 <= chosen < len(options) else str(given)
         feedback = checkpoint["affirm"] if correct else checkpoint["explanation"]
         misconception = "" if correct else f"they chose: {given_text}"
     else:
@@ -1003,6 +1131,7 @@ def api_answer():
     if not correct:
         # A wrong answer earns its own video: their problem, their wrong move.
         def work(job: Job) -> dict:
+            require_ffmpeg()  # before the Claude call — a doomed run should cost nothing
             job.advance(0, "Working out where that came from")
             scenes = build_miss_scenes(lesson.plan, index, given_text, misconception, lesson.image)
 
@@ -1118,6 +1247,9 @@ if __name__ == "__main__":
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     ensure_fonts()
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        print("[warn] ffmpeg/ffprobe are not on PATH — videopython cannot stitch frames.")
+    if not ensure_ffmpeg():
+        bar = "━" * 78
+        print(f"\n{bar}\n  CANNOT RENDER VIDEO\n\n  {FFMPEG_HELP}\n\n"
+              f"  The server still starts, and the research pages still read, but every\n"
+              f"  lesson will fail until this is fixed.\n{bar}\n")
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)), debug=False, threaded=True)
