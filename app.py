@@ -143,6 +143,26 @@ def claude():
     return _client
 
 
+# Structured outputs accept only a subset of JSON Schema — no array-length bounds, no
+# numeric or string constraints. The SDK strips these automatically, but only when it
+# builds the schema itself from a Pydantic model; a hand-written dict goes to the wire
+# verbatim and the server answers 400. Ours are hand-written, so we prune them here.
+_UNSUPPORTED_SCHEMA_KEYS = frozenset({
+    "minItems", "maxItems", "uniqueItems", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minLength", "maxLength", "pattern", "minProperties", "maxProperties",
+})
+
+
+def prune_schema(node: Any) -> Any:
+    """Drop every keyword structured outputs will not accept, at any depth."""
+    if isinstance(node, dict):
+        return {k: prune_schema(v) for k, v in node.items() if k not in _UNSUPPORTED_SCHEMA_KEYS}
+    if isinstance(node, list):
+        return [prune_schema(v) for v in node]
+    return node
+
+
 def ask_json(system: str, content: list[dict], schema: dict, max_tokens: int = 32000) -> dict:
     """One structured Claude call. Streams so long SVG payloads can't time out."""
     with claude().messages.stream(
@@ -150,7 +170,7 @@ def ask_json(system: str, content: list[dict], schema: dict, max_tokens: int = 3
         max_tokens=max_tokens,
         system=system,
         thinking={"type": "adaptive"},
-        output_config={"format": {"type": "json_schema", "schema": schema}},
+        output_config={"format": {"type": "json_schema", "schema": prune_schema(schema)}},
         messages=[{"role": "user", "content": content}],
     ) as stream:
         message = stream.get_final_message()
@@ -244,7 +264,7 @@ CONTINUITY BETWEEN FRAMES — this is what makes the video flow
   a page, not as a slide change.
 - Because consecutive frames are near-identical apart from the new mark, pick "dissolve" for
   those. Reserve a wipe or slide for a genuine change of subject (e.g. leaving the diagram to
-  do algebra). Never use a transition on the first scene of a segment.
+  do algebra). The first scene of a segment has no predecessor, so its transition is "none".
 """
 
 SCENE_SCHEMA = {
@@ -256,8 +276,10 @@ SCENE_SCHEMA = {
         },
         "scenes": {
             "type": "array",
-            "minItems": SCENES_PER_STEP[0],
-            "maxItems": SCENES_PER_STEP[1],
+            "description": (
+                f"{SCENES_PER_STEP[0]}-{SCENES_PER_STEP[1]} frames, in order. "
+                "Structured outputs cannot bound array length, so hold to that range yourself."
+            ),
             "items": {
                 "type": "object",
                 "properties": {
@@ -267,11 +289,17 @@ SCENE_SCHEMA = {
                         "description": "What the voice says over this frame. 1-3 sentences, spoken register.",
                     },
                     "transition_in": {
-                        "type": ["object", "null"],
-                        "description": "How this frame arrives from the previous one. null on the first scene.",
+                        "type": "object",
+                        "description": (
+                            "How this frame arrives from the previous one. "
+                            'Use "none" on the first scene of the segment, and for a deliberate hard cut.'
+                        ),
                         "properties": {
-                            "type": {"type": "string", "enum": TRANSITION_TYPES},
-                            "duration": {"type": "number", "minimum": 0.3, "maximum": 2.0},
+                            "type": {"type": "string", "enum": TRANSITION_TYPES + ["none"]},
+                            "duration": {
+                                "type": "number",
+                                "description": 'Seconds, between 0.3 and 2.0. Use 0 with "none".',
+                            },
                         },
                         "required": ["type", "duration"],
                         "additionalProperties": False,
@@ -312,9 +340,11 @@ PLAN_SCHEMA = {
         },
         "steps": {
             "type": "array",
-            "minItems": CHECKPOINT_COUNT,
-            "maxItems": CHECKPOINT_COUNT,
-            "description": "The solution to the SIMILAR problem, one honest step at a time.",
+            "description": (
+                "The solution to the SIMILAR problem, one honest step at a time. "
+                f"Exactly {CHECKPOINT_COUNT} entries — structured outputs cannot bound "
+                "array length, so hold to that count yourself."
+            ),
             "items": {
                 "type": "object",
                 "properties": {
@@ -329,9 +359,10 @@ PLAN_SCHEMA = {
         },
         "checkpoints": {
             "type": "array",
-            "minItems": CHECKPOINT_COUNT,
-            "maxItems": CHECKPOINT_COUNT,
-            "description": "One question per step, each about the student's ORIGINAL problem.",
+            "description": (
+                "One question per step, each about the student's ORIGINAL problem. "
+                f"Exactly {CHECKPOINT_COUNT} entries, index-aligned with `steps`."
+            ),
             "items": {
                 "type": "object",
                 "properties": {
@@ -639,8 +670,9 @@ def render_scenes(scenes: list[dict], workdir: Path, out_path: Path,
     for i, (path, _, transition, _) in enumerate(clips):
         meta = VideoMetadata.from_path(path)
         spec = None
-        if i > 0:
-            kind = (transition or {}).get("type", "dissolve")
+        kind = (transition or {}).get("type", "dissolve")
+        # The opening scene has no predecessor, and "none" is Claude asking for a hard cut.
+        if i > 0 and kind != "none":
             length = float((transition or {}).get("duration", 0.8) or 0.8)
             if kind not in TRANSITION_TYPES:
                 kind = "dissolve"
