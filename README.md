@@ -40,17 +40,17 @@ Qwen knobs live at the top of `app.py`:
 
 | | |
 |---|---|
-| `QWEN_MODEL` | `wan2.7-t2v` — generally available, 1080p, native synchronised audio, 15-second ceiling. `wan3.0-t2v` would double that to 30s but its Model Studio API is still in preview; raise `QWEN_MAX_SECONDS` to 30 if you switch. |
-| `QWEN_MAX_SECONDS` | How long ONE clip may run. A step spans as many clips as its narration needs. |
-| `MAX_CLIPS_PER_STEP` | How many clips a step may span — with the clip ceiling, this sets the whole-step word budget. |
-| `QWEN_SIZE` | `1920*1080`. DashScope spells sizes with a star, not an x. |
+| `QWEN_MODEL` | `wan3.0-video-prime` — Wan3.0 Prime, the high-speed Wan3.0 video model, with audio. Available on the free tier. **This is the ID the console shows; `wan3.0-t2v` is not a Model Studio ID and is refused with `AccessDenied.Unpurchased`.** |
+| `QWEN_MAX_SECONDS` | How long ONE clip may run. Wan3.0 Prime takes an integer 2-30. |
+| `MAX_STEP_SECONDS` | How long a whole step may run, which sets the narration budget. At 30s that is ~61 words and usually a single clip; a step needing more spills into a second. |
+| `QWEN_RESOLUTION` / `QWEN_RATIO` | `720P` and `widescreen`. Note this model takes **`resolution` and `ratio`**, not `size` — passing `size` is the wrong shape. |
 | `DASHSCOPE_REGION` | `intl` points the SDK at the Singapore host; use `cn` for a mainland account. The SDK ships pointed at mainland, so an international key fails until this is right. |
 | `WORDS_PER_SECOND` / `BEAT_SECONDS` | The speaking-pace estimate that turns a narration into a duration. |
 
-**Note:** 15 seconds is the ceiling on one *clip*, not on a step. A step is rendered as
-up to `MAX_CLIPS_PER_STEP` clips played back to back, so the narration budget is
-`15s x 4 = 60s`, about **100 words per step**. Raise `MAX_CLIPS_PER_STEP` for longer
-steps at proportionally more cost and generation time.
+**Note:** output is billed **per second**, so `MAX_STEP_SECONDS` is the cost dial as
+well as the pedagogy one. At the default 30s a six-checkpoint lesson is around seven
+clips of ~30s. Raising it buys words at a linear cost; dropping `QWEN_RESOLUTION` to
+`480P` is the cheaper lever if the notebook text still reads.
 
 ## The pipeline
 
@@ -84,12 +84,13 @@ photo of the problem
    instructions, then KEYFRAME n OF N with its line and its raw SVG
         │
         ▼
-   plan_clips() splits the flipbook into clips that each fit the 15s
+   plan_clips() splits the flipbook into clips that each fit the 30s
    ceiling. Clip k+1 opens on clip k's CLOSING keyframe — the page as
    the student last saw it — so the seam lands on identical artwork
         │
         ▼   for each clip k
-   VideoSynthesis.async_call(model="wan2.7-t2v", prompt=..., size=...,
+   VideoSynthesis.async_call(model="wan3.0-video-prime", prompt=...,
+                             resolution="720P", ratio="widescreen",
                              duration=<seconds that clip's lines need>)
    poll VideoSynthesis.fetch() through PENDING → RUNNING → SUCCEEDED
    download output.video_url → step_i_k.mp4
@@ -109,7 +110,7 @@ onto one continuous page rather than cutting between slides. `SVG_STYLE_RULES` p
 down the notebook substrate, the palette, the three type voices, and the accumulate-only
 flipbook rule that makes the interpolation legible.
 
-**How a step outruns the 15-second ceiling.** DashScope has no extensions endpoint, and
+**How a step outruns the clip ceiling.** DashScope has no extensions endpoint, and
 concatenating locally would drag ffmpeg back in — but neither is needed. Because the
 flipbook only ever accumulates, the last keyframe of one clip is *already* a valid
 opening frame for the next. So `plan_clips()` splits a step into N clips, hands each one
@@ -119,10 +120,10 @@ segment. The seam lands on identical artwork, and the checkpoint only fires when
 last clip ends.
 
 Two guards keep anything from being cut off. `fit_narration()` shortens a step that runs
-past what `MAX_CLIPS_PER_STEP` clips can carry — and, separately, any *single* line
-longer than one clip, since no amount of splitting saves a line that cannot fit in the
-clip it is spoken over. `fit_duration()` then asks for exactly the seconds each clip's
-lines need, so short clips stay short instead of padding to the ceiling.
+past `MAX_STEP_SECONDS` — and, separately, any *single* line longer than one clip, since
+no amount of splitting saves a line that cannot fit in the clip it is spoken over.
+`fit_duration()` then asks for exactly the seconds each clip's lines need, so short clips
+stay short instead of padding to the ceiling.
 
 ## Layout
 
@@ -159,9 +160,9 @@ the page DOM.
 - **Narration length is estimated, not measured.** `speaking_seconds()` counts words at
   `WORDS_PER_SECOND` and adds a beat per line. It has never heard the voice Qwen will
   use, so the budget is a guess — tune the two constants once you have seen real output.
-- **A step costs N Qwen calls, not one.** At four clips a six-checkpoint lesson is
-  around 26 generations. That is the price of the 100-word budget; `MAX_CLIPS_PER_STEP`
-  is the dial.
+- **Output is billed per second, and a step is 30 of them.** `MAX_STEP_SECONDS` and
+  `QWEN_RESOLUTION` are the two dials; a step that spills into a second clip doubles
+  its cost.
 - **The seams are only as good as Qwen's obedience.** Each clip is told to open on the
   previous one's closing frame without redrawing or re-establishing it. If it ignores
   that, a seam will show as a visible jump. Worth watching on the first real run.

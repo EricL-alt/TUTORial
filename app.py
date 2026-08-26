@@ -50,18 +50,20 @@ DASHSCOPE_API_KEY = "sk-REPLACE-WITH-YOUR-KEY"
 
 MODEL = "claude-opus-5"
 
-QWEN_MODEL = "wan2.7-t2v"    # 15s ceiling, native synchronised audio, generally available
-QWEN_SIZE = "1920*1080"      # DashScope spells sizes with a star, not an x
+QWEN_MODEL = "wan3.0-video-prime"   # Wan3.0 Prime — 2-30s per clip, with audio
+QWEN_RESOLUTION = "720P"     # "480P" | "720P" | "1080P" — price is per second of output
+QWEN_RATIO = "widescreen"    # "widescreen" | "adaptive" | "vertical" | "square" | "classic"
 DASHSCOPE_REGION = "intl"    # "intl" for the Singapore host, "cn" for mainland
 
-# A single Qwen clip caps at QWEN_MAX_SECONDS, which is far too little for a whole
-# step. DashScope has no extensions endpoint, but it does not need one: because the
-# flipbook only ever accumulates, the LAST keyframe of one clip is already a valid
-# opening frame for the next. So a step is rendered as N clips that each open on the
-# previous clip's closing frame, and the player runs them back to back as one segment.
-QWEN_MAX_SECONDS = 15        # wan2.7-t2v ceiling; wan3.0-t2v would allow 30, in preview
-QWEN_MIN_SECONDS = 5
-MAX_CLIPS_PER_STEP = 4       # the ceiling on how long one step may run
+# QWEN_MAX_SECONDS is the ceiling on ONE clip; MAX_STEP_SECONDS is how long a whole
+# step may run, and sets the narration budget. When a step needs more than one clip,
+# it gets one: because the flipbook only ever accumulates, the LAST keyframe of a clip
+# is already a valid opening frame for the next, so a step is rendered as N clips that
+# each open on the previous clip's closing frame and the player runs them back to back.
+QWEN_MAX_SECONDS = 30        # wan3.0-video-prime accepts an integer 2-30
+QWEN_MIN_SECONDS = 2
+MAX_STEP_SECONDS = 30        # ~61 words a step, and usually one clip. Raising this buys
+                             # words at a linear cost — output is billed per second.
 WORDS_PER_SECOND = 2.4       # unhurried explaining pace
 BEAT_SECONDS = 0.9           # the pause after a line lands
 
@@ -525,14 +527,14 @@ def fit_narration(payload: dict) -> dict:
     """Shorten over-long narration rather than let the video model truncate it.
 
     Two ways a step can overrun. It can be too long overall, past what
-    MAX_CLIPS_PER_STEP clips can carry. Or one single line can be longer than a whole
+    MAX_STEP_SECONDS allows. Or one single line can be longer than a whole
     clip, in which case no amount of splitting saves it — a clip cannot be stretched
     past QWEN_MAX_SECONDS, so that line would be cut off mid-sentence. Either is worth
     one extra call to avoid.
     """
     frames = payload["frames"]
     spoken = flipbook_seconds(frames)
-    ceiling = QWEN_MAX_SECONDS * MAX_CLIPS_PER_STEP
+    ceiling = float(MAX_STEP_SECONDS)
     per_line = QWEN_MAX_SECONDS - BEAT_SECONDS      # one line alone in its own clip
     longest = max(speaking_seconds(f["narration"]) for f in frames)
     if spoken <= ceiling and longest <= per_line:
@@ -633,7 +635,7 @@ problem, then the handoff. Each keyframe is one SVG plus the line spoken over it
 
 LENGTH
 The step is rendered as a run of short clips played back to back, so you are not writing to a
-single {QWEN_MAX_SECONDS}-second window — say what the step actually needs. Keep the whole
+single short window — say what the step actually needs. Keep the whole
 step under {budget} words across all keyframes combined, in plain spoken sentences, and no
 SINGLE keyframe's line past {clip_budget} words — each line is spoken over one short clip that
 cannot be stretched. Anything past that gets sent back to be cut, so stop when the step is
@@ -676,7 +678,7 @@ give away the answer — they are about to attempt it again.
 
 LENGTH
 The correction is rendered as a run of short clips played back to back, so you are not writing
-to a single {QWEN_MAX_SECONDS}-second window. Keep the whole correction under {budget} words
+to a single short window. Keep the whole correction under {budget} words
 across all keyframes combined, and no SINGLE keyframe's line past {clip_budget} words."""
 
     return fit_narration(normalize_frames(ask_json(
@@ -716,7 +718,7 @@ THE STUDENT WROTE: {given}"""
 #
 # There is no extensions endpoint here, so instead of stretching the video to
 # fit the narration we size the narration to fit the video: Claude is given a
-# word budget derived from QWEN_MAX_SECONDS, and anything that still overruns is
+# word budget derived from MAX_STEP_SECONDS, and anything that still overruns is
 # sent back once to be tightened. A step therefore always fits inside one clip
 # and is never cut off mid-sentence.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -770,8 +772,14 @@ def clip_word_budget() -> int:
 
 
 def narration_word_budget() -> int:
-    """Words a whole step may use, across every clip it is allowed to span."""
-    return clip_word_budget() * MAX_CLIPS_PER_STEP
+    """Words a whole step may use, however many clips it ends up spanning."""
+    speakable = MAX_STEP_SECONDS - BEAT_SECONDS * FRAMES_PER_STEP[1]
+    return int(max(speakable, 1) * WORDS_PER_SECOND)
+
+
+def max_clips_per_step() -> int:
+    """How many clips MAX_STEP_SECONDS can spill into, at this clip ceiling."""
+    return max(1, math.ceil(MAX_STEP_SECONDS / QWEN_MAX_SECONDS))
 
 
 def plan_clips(frames: list[dict]) -> list[dict]:
@@ -807,11 +815,11 @@ def plan_clips(frames: list[dict]) -> list[dict]:
         closing, clip["opening"] = clip["opening"], handed
         handed = closing
 
-    # MAX_CLIPS_PER_STEP bounds the word budget handed to Claude, and fit_narration
+    # MAX_STEP_SECONDS bounds the word budget handed to Claude, and fit_narration
     # enforces it upstream. If something still lands over, render the extra clip:
     # dropping a keyframe would lose teaching, which is the whole point of splitting.
-    if len(clips) > MAX_CLIPS_PER_STEP:
-        warn_once("clips", f"a step needed {len(clips)} clips, over the {MAX_CLIPS_PER_STEP} "
+    if len(clips) > max_clips_per_step():
+        warn_once("clips", f"a step needed {len(clips)} clips, over the {max_clips_per_step()} "
                            "budgeted — rendering them all rather than dropping a keyframe")
     return clips
 
@@ -914,7 +922,8 @@ def render_one_clip(clip: dict, index: int, total_clips: int, closing: str,
     started = VideoSynthesis.async_call(
         model=QWEN_MODEL,
         prompt=prompt,
-        size=QWEN_SIZE,
+        resolution=QWEN_RESOLUTION,
+        ratio=QWEN_RATIO,
         duration=duration,
     )
     if started.status_code != 200 or not started.output:
