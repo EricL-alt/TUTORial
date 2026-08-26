@@ -19,7 +19,7 @@ case; **Works Cited** carries the 30 sources in MLA 9th.
 ## Running it
 
 No system dependencies — no ffmpeg, no local rendering, no GPU. Video generation
-happens in Sora.
+happens in Qwen, on Alibaba Cloud Model Studio.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -27,23 +27,32 @@ pip install -r requirements.txt
 
 # prototyping stage: both keys are literals in the source
 #   app.py →  ANTHROPIC_API_KEY = "sk-ant-..."
-#             OPENAI_API_KEY    = "sk-proj-..."
+#             DASHSCOPE_API_KEY = "sk-..."
 
 python app.py            # http://127.0.0.1:5000
 ```
 
 The first run downloads the three notebook typefaces (Lilita One, Patrick Hand,
 Caveat) into `static/fonts/`. They are only a reference for the SVG Claude writes —
-the frames themselves are rendered by Sora, so an offline first run costs nothing.
+the frames themselves are rendered by Qwen, so an offline first run costs nothing.
 
-Sora knobs live at the top of `app.py`: `SORA_MODEL` (`sora-2` or `sora-2-pro`),
-`SORA_SIZE` (`1280x720` landscape, to match the taped-in player), and the pacing
-constants `WORDS_PER_SECOND` / `BEAT_SECONDS` that decide how long a step's narration
-needs. A single clip caps at 20 seconds, so longer steps are chained — see below.
+Qwen knobs live at the top of `app.py`:
+
+| | |
+|---|---|
+| `QWEN_MODEL` | `wan3.0-t2v` — a 30-second ceiling with native synchronised audio. `wan2.7-t2v` is the generally-available fallback but tops out at 15s; drop `QWEN_MAX_SECONDS` to 15 if you switch. |
+| `QWEN_MAX_SECONDS` | The clip ceiling, and therefore the narration budget. |
+| `QWEN_SIZE` | `1920*1080`. DashScope spells sizes with a star, not an x. |
+| `DASHSCOPE_REGION` | `intl` points the SDK at the Singapore host; use `cn` for a mainland account. The SDK ships pointed at mainland, so an international key fails until this is right. |
+| `WORDS_PER_SECOND` / `BEAT_SECONDS` | The speaking-pace estimate that turns a narration into a duration. |
+
+**Note:** `wan3.0-t2v` shipped on 24 August 2026 and the Model Studio API for it is
+still in preview, so it may not be enabled on your account yet. If it is rejected,
+set `QWEN_MODEL = "wan2.7-t2v"` and `QWEN_MAX_SECONDS = 15`.
 
 ## The pipeline
 
-Claude draws a flipbook; Sora animates it. Nothing renders locally.
+Claude draws a flipbook; Qwen animates it. Nothing renders locally.
 
 ```
 photo of the problem
@@ -68,19 +77,15 @@ photo of the problem
   │  difference between frames IS the animation.                │
   └─────────────────────────────────────────────────────────────┘
         │
-        ▼                                  create_sora_video()
-   plan_chunks() splits the flipbook so each chunk's narration fits
-   inside one clip (20s is Sora's ceiling), rounding up to an allowed
-   length of 4, 8, 12, 16 or 20 seconds
+        ▼                                  create_qwen_video()
+   the whole flipbook becomes one prompt: the animation and narration
+   instructions, then KEYFRAME n OF N with its line and its raw SVG
         │
         ▼
-   chunk 1   videos.create(model="sora-2", prompt=..., seconds=..., size=...)
-   chunk 2   videos.extend(video={"id": previous}, prompt=..., seconds=...)
-   chunk n   ... each continuing the one before  (POST /v1/videos/extensions)
-        │
-        ▼
-   poll retrieve() through queued → in_progress → completed
-   download_content(id, variant="video").write_to_file(step_i.mp4)
+   VideoSynthesis.async_call(model="wan3.0-t2v", prompt=..., size=...,
+                             duration=<seconds the narration needs>)
+   poll VideoSynthesis.fetch() through PENDING → RUNNING → SUCCEEDED
+   download output.video_url → step_i.mp4
    mp4_duration() reads the real length out of the file's mvhd atom
         │
         ▼
@@ -91,23 +96,25 @@ photo of the problem
                         showing the wrong move and why it breaks → try again
 ```
 
-The SVG goes into the Sora prompt as plain text — Sora reads it as the exact artwork
+The SVG goes into the Qwen prompt as plain text — Qwen reads it as the exact artwork
 for that beat and animates between beats, so new labels and lines appear to be written
 onto one continuous page rather than cutting between slides. `SVG_STYLE_RULES` pins
 down the notebook substrate, the palette, the three type voices, and the accumulate-only
 flipbook rule that makes the interpolation legible.
 
-**Why the chaining exists.** A single Sora clip tops out at 20 seconds, which routinely
-ends before a step has finished being explained — the video would stop mid-sentence.
-So the flipbook is packed into as many clips as the narration actually needs and every
-clip after the first is appended with `POST /v1/videos/extensions`, which takes the
-completed clip as context. Each extension prompt carries only its own keyframes and
-opens by telling Sora to continue on the same page without re-establishing the shot.
+**Why the narration is budgeted.** DashScope has no equivalent of Sora's extensions
+endpoint, so a step cannot be stretched across several clips without concatenating them
+locally — which would drag ffmpeg back in. Instead the dependency runs the other way:
+the narration is sized to the clip. `narration_word_budget()` turns `QWEN_MAX_SECONDS`
+into a word count, both scene prompts state it as a hard limit, and `fit_narration()`
+catches anything that still overruns and asks Claude once for a shorter cut of the same
+lines. `fit_duration()` then requests exactly the seconds that narration needs, up to the
+ceiling. A step therefore always fits inside one clip and is never cut off mid-sentence.
 
 ## Layout
 
 ```
-app.py                 everything: config, Claude calls, the Sora call, jobs, routes
+app.py                 everything: config, Claude calls, the Qwen call, jobs, routes
 templates/index.html   the notebook — the whole interface and its state machine
 static/sample-problem.png
 static/fonts/          fetched on first run
@@ -120,7 +127,7 @@ media/<session>/       generated videos and uploads (in-memory sessions, ephemer
 |---|---|
 | `POST /api/upload` | takes the photo (or falls back to the sample), opens a session |
 | `POST /api/start` | plan + first segment, as one background job |
-| `POST /api/segment` | draw the flipbook for step *i* and have Sora animate it |
+| `POST /api/segment` | draw the flipbook for step *i* and have Qwen animate it |
 | `POST /api/answer` | mark a checkpoint; on a miss, kicks off the correction video |
 | `GET /api/job/<id>` | poll a background job: stage, label, detail, result |
 | `GET /api/state/<sid>` | the whole lesson as the browser is allowed to see it |
@@ -128,7 +135,7 @@ media/<session>/       generated videos and uploads (in-memory sessions, ephemer
 
 Correct answers, `target` values, affirmations and explanations never reach the
 browser — `public_checkpoint()` strips them and `/api/answer` marks server-side.
-Claude's SVG only ever travels inside the Sora prompt on the server; it never enters
+Claude's SVG only ever travels inside the Qwen prompt on the server; it never enters
 the page DOM.
 
 ## What is deliberately unfinished
@@ -137,10 +144,12 @@ the page DOM.
   Fine for the prototype, wrong for anything else.
 - **No auth, no rate limiting, two hardcoded keys.** `app.run()` is the dev server.
 - **Narration length is estimated, not measured.** `speaking_seconds()` counts words at
-  `WORDS_PER_SECOND` and adds a beat per line, then rounds each chunk up to the next
-  allowed clip length. It errs long — a step needing 49s is given 64s — so nothing gets
-  cut off, but some clips end with dead air. Tune the two constants against real output.
-- **Sora interprets, it does not rasterise.** The SVG is a very strong hint, not a
+  `WORDS_PER_SECOND` and adds a beat per line. It has never heard the voice Qwen will
+  use, so the budget is a guess — tune the two constants once you have seen real output.
+- **A 30-second ceiling caps how much a step can say.** About 61 words for a whole step.
+  That is a real pedagogical constraint, not just a technical one: a step needing more
+  gets tightened rather than split.
+- **Qwen interprets, it does not rasterise.** The SVG is a very strong hint, not a
   guarantee — expect the wording and geometry to drift from what Claude drew. If a step
   needs exact figures, this is the wrong renderer for it.
 - **Reasoning accuracy is validated on geometry only.** The pipeline is subject-agnostic

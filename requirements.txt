@@ -1,9 +1,9 @@
 # TUTORial — Flask prototype
 #
-# No system dependencies. Video generation happens in Sora, so there is no
-# ffmpeg, no local rendering and no GPU to provision.
+# No system dependencies. Video generation happens in Qwen (Alibaba Cloud Model
+# Studio), so there is no ffmpeg, no local rendering and no GPU.
 
 Flask>=3.0
 anthropic>=1.0             # the lesson plan, the flipbook SVGs, the checkpoints
-openai>=3.0                # Sora animates the flipbook into each video segment
-requests>=2.31             # only used to fetch the notebook fonts on first run
+dashscope>=1.24            # Qwen/Wan animates the flipbook into each video segment
+requests>=2.31             # downloads the finished clip, and the notebook fonts

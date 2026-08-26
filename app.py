@@ -4,14 +4,14 @@ TUTORial — a notebook that quizzes you back.
 A student photographs a problem they are stuck on. Claude reads it, invents a
 *similar* problem, decomposes that similar problem into steps, and writes one
 checkpoint question per step about the student's ORIGINAL problem. Each step is
-then drawn as a flipbook of SVG keyframes, which Sora animates into one seamless
+then drawn as a flipbook of SVG keyframes, which Qwen animates into one seamless
 video segment that plays up to the next checkpoint and stops.
 
 The student cannot advance until they produce the step themselves. A wrong
 answer generates a second video that diagnoses the mistake on their own problem
 and sends them back to try again.
 
-Everything lives in this one file: config, the Claude calls, the Sora call, the
+Everything lives in this one file: config, the Claude calls, the Qwen call, the
 background job runner, and the Flask routes.
 
 Run:
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import mimetypes
 import os
 import re
@@ -45,20 +46,20 @@ from werkzeug.utils import secure_filename
 # ─────────────────────────────────────────────────────────────────────────────
 
 ANTHROPIC_API_KEY = "sk-ant-REPLACE-WITH-YOUR-KEY"
-OPENAI_API_KEY = "sk-proj-REPLACE-WITH-YOUR-KEY"
+DASHSCOPE_API_KEY = "sk-REPLACE-WITH-YOUR-KEY"
 
 MODEL = "claude-opus-5"
 
-SORA_MODEL = "sora-2"        # or "sora-2-pro"
-SORA_SIZE = "1280x720"       # landscape, to match the taped-in player
+QWEN_MODEL = "wan3.0-t2v"    # 30s ceiling, native synchronised audio
+QWEN_SIZE = "1920*1080"      # DashScope spells sizes with a star, not an x
+DASHSCOPE_REGION = "intl"    # "intl" for the Singapore host, "cn" for mainland
 
-# One Sora clip cannot outlast SORA_MAX_SECONDS, which is regularly shorter than the
-# narration needs — so a step is split across clips and chained with the extensions
-# endpoint. These are the lengths the API accepts: the SDK's VideoSeconds alias is
-# stale at ("4", "8", "12"), but VideoExtendParams documents 16 and 20 and Python does
-# not enforce a Literal at runtime, so the wider set goes through.
-SORA_ALLOWED_SECONDS = (4, 8, 12, 16, 20)
-SORA_MAX_SECONDS = SORA_ALLOWED_SECONDS[-1]
+# A Qwen clip is one call with no extensions endpoint to chain onto, so rather than
+# stretching the video to fit the narration we size the narration to fit the video:
+# Claude is handed narration_word_budget() and anything that still overruns is sent
+# back once to be tightened. Nothing is ever cut off mid-sentence.
+QWEN_MAX_SECONDS = 30        # wan3.0-t2v ceiling; wan2.7-t2v tops out at 15
+QWEN_MIN_SECONDS = 5
 WORDS_PER_SECOND = 2.4       # unhurried explaining pace
 BEAT_SECONDS = 0.9           # the pause after a line lands
 
@@ -504,6 +505,60 @@ def normalize_frames(payload: dict) -> dict:
     return payload
 
 
+TIGHTEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "narrations": {
+            "type": "array",
+            "description": "The rewritten lines, one per keyframe, in the same order.",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["narrations"],
+    "additionalProperties": False,
+}
+
+
+def fit_narration(payload: dict) -> dict:
+    """Keep a step inside one clip by shortening its narration, never by cutting it.
+
+    Only fires when Claude overshot the budget it was given, which the prompts make
+    unlikely — but a step that overran would be truncated mid-sentence by the video
+    model, so it is worth one extra call to avoid.
+    """
+    frames = payload["frames"]
+    spoken = flipbook_seconds(frames)
+    if spoken <= QWEN_MAX_SECONDS:
+        return payload
+
+    budget = narration_word_budget()
+    warn_once("tighten", f"narration ran to ~{spoken:.0f}s (cap {QWEN_MAX_SECONDS}s); asking for a shorter cut")
+    lines = "\n".join(f'{i + 1}. "{f["narration"]}"' for i, f in enumerate(frames))
+    try:
+        result = ask_json(
+            system=(
+                "You tighten narration for a short explainer video. Return the same number of "
+                "lines in the same order, saying the same things in fewer words. Keep every "
+                "idea and every number; drop only padding, restatement and throat-clearing. "
+                "Plain spoken sentences."
+            ),
+            content=[{"type": "text", "text":
+                      f"These {len(frames)} lines must be speakable in under "
+                      f"{QWEN_MAX_SECONDS} seconds — about {budget} words in total, "
+                      f"currently {sum(len(f['narration'].split()) for f in frames)}.\n\n{lines}"}],
+            schema=TIGHTEN_SCHEMA,
+            max_tokens=8000,
+        )
+        tightened = [str(n) for n in result.get("narrations") or []]
+        if len(tightened) == len(frames) and all(t.strip() for t in tightened):
+            for frame, line in zip(frames, tightened):
+                frame["narration"] = line.strip()
+            warn_once("tighten", f"rewritten to ~{flipbook_seconds(frames):.0f}s")
+    except Exception as exc:
+        warn_once("tighten", f"could not shorten the narration ({exc}); sending it as written")
+    return payload
+
+
 def build_plan(problem_image: Path) -> dict:
     return ask_json(
         system=PLAN_SYSTEM,
@@ -527,6 +582,7 @@ def build_plan(problem_image: Path) -> dict:
 def build_step_scenes(plan: dict, index: int) -> dict:
     step = plan["steps"][index]
     checkpoint = plan["checkpoints"][index]
+    budget = narration_word_budget()
     prior = "\n".join(
         f"  step {i + 1}. {s['title']} — {s['work']}" for i, s in enumerate(plan["steps"][:index])
     ) or "  (none — this is the opening step)"
@@ -557,16 +613,23 @@ Do not answer that question, hint at its answer, or show their problem's numbers
 is the handoff: a stamped "YOUR TURN" card that tells them to take this same move over to their
 own problem. It must not restate the question — the interface asks it.
 
-Write {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} scenes: the step being made on the similar
-problem, then the handoff. Each scene is one `image_prompt` — the SVG for that frame followed by
-its TRANSITION TO NEXT SCENE line — and one `narration`."""
+Draw {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} keyframes: the step being made on the similar
+problem, then the handoff. Each keyframe is one SVG plus the line spoken over it.
 
-    return normalize_frames(ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000))
+LENGTH — this is a hard limit, not a style note
+The whole step becomes ONE video clip of at most {QWEN_MAX_SECONDS} seconds, and the narration
+has to be spoken inside it. Keep every narration line in this step to {budget} words IN TOTAL,
+across all keyframes combined. Write tight, plain sentences; say the one thing this step is
+for and stop. A step that overruns gets sent back to be cut, so write it short the first time."""
+
+    return fit_narration(normalize_frames(
+        ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000)))
 
 
 def build_miss_scenes(plan: dict, index: int, given: str, misconception: str,
                       problem_image: Path) -> dict:
     checkpoint = plan["checkpoints"][index]
+    budget = narration_word_budget()
 
     system = (
         "You write the scenes of a TUTORial correction video. A student answered a checkpoint "
@@ -592,14 +655,18 @@ Write {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} scenes, working on THEIR probl
 4. Close on a stamped "TRY IT AGAIN" card.
 
 Be kind and specific. Never say "you should know this", never call the mistake careless, and never
-give away the answer — they are about to attempt it again."""
+give away the answer — they are about to attempt it again.
 
-    return normalize_frames(ask_json(
+LENGTH — this is a hard limit, not a style note
+The whole correction becomes ONE video clip of at most {QWEN_MAX_SECONDS} seconds. Keep every
+narration line to {budget} words IN TOTAL across all keyframes combined."""
+
+    return fit_narration(normalize_frames(ask_json(
         system,
         [image_block(problem_image), {"type": "text", "text": user}],
         SCENE_SCHEMA,
         max_tokens=32000,
-    ))
+    )))
 
 
 def grade_free_text(plan: dict, index: int, given: str) -> dict:
@@ -623,13 +690,17 @@ THE STUDENT WROTE: {given}"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENES → VIDEO (Sora)
+# SCENES → VIDEO (Qwen / Wan on DashScope)
 #
 # Claude draws the step as a flipbook: SVG keyframes, each with the narration
-# spoken over it. Sora renders a clip of at most SORA_MAX_SECONDS, which is
-# routinely shorter than the narration needs — so the flipbook is split into
-# chunks that each fit one clip, and every chunk after the first is appended with
-# POST /v1/videos/extensions until every line has been covered.
+# spoken over it. The whole flipbook goes into one DashScope video-synthesis
+# call and comes back as a single clip.
+#
+# There is no extensions endpoint here, so instead of stretching the video to
+# fit the narration we size the narration to fit the video: Claude is given a
+# word budget derived from QWEN_MAX_SECONDS, and anything that still overruns is
+# sent back once to be tightened. A step therefore always fits inside one clip
+# and is never cut off mid-sentence.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _warned: set[str] = set()
@@ -641,21 +712,28 @@ def warn_once(key: str, message: str) -> None:
         print(f"[{key}] {message}")
 
 
-_openai_lock = threading.Lock()
-_openai = None
+_dashscope_lock = threading.Lock()
+_dashscope_ready = False
 
 
-def sora():
-    global _openai
-    with _openai_lock:
-        if _openai is None:
-            import openai
-            if "REPLACE-WITH-YOUR-KEY" in OPENAI_API_KEY:
+def dashscope_api():
+    """The DashScope SDK, pointed at the right region and holding the key."""
+    global _dashscope_ready
+    import dashscope
+    with _dashscope_lock:
+        if not _dashscope_ready:
+            if "REPLACE-WITH-YOUR-KEY" in DASHSCOPE_API_KEY:
                 raise RuntimeError(
-                    "Set OPENAI_API_KEY at the top of app.py to your OpenAI API key."
+                    "Set DASHSCOPE_API_KEY at the top of app.py to your Alibaba Cloud "
+                    "Model Studio (DashScope) key."
                 )
-            _openai = openai.OpenAI(api_key=OPENAI_API_KEY, timeout=900.0)
-    return _openai
+            dashscope.api_key = DASHSCOPE_API_KEY
+            # The SDK ships pointed at the mainland endpoint; an international
+            # Model Studio account must be sent to the Singapore host instead.
+            if DASHSCOPE_REGION == "intl":
+                dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
+            _dashscope_ready = True
+    return dashscope
 
 
 def speaking_seconds(narration: str) -> float:
@@ -663,39 +741,33 @@ def speaking_seconds(narration: str) -> float:
     return len(narration.split()) / WORDS_PER_SECOND + BEAT_SECONDS
 
 
-def fit_seconds(needed: float) -> str:
-    """The shortest clip length Sora offers that still covers `needed`."""
-    for allowed in SORA_ALLOWED_SECONDS:
-        if allowed >= needed:
-            return str(allowed)
-    return str(SORA_ALLOWED_SECONDS[-1])
+def flipbook_seconds(frames: list[dict]) -> float:
+    return sum(speaking_seconds(f["narration"]) for f in frames)
 
 
-def plan_chunks(frames: list[dict]) -> list[dict]:
-    """Split the flipbook so each chunk's narration fits inside one Sora clip.
-
-    A frame whose line is longer than a whole clip still gets its own chunk —
-    it is the most we can give it — but nothing is ever dropped.
-    """
-    chunks: list[dict] = []
-    current: list[dict] = []
-    running = 0.0
-
-    for frame in frames:
-        needed = speaking_seconds(frame["narration"])
-        if current and running + needed > SORA_MAX_SECONDS:
-            chunks.append({"frames": current, "seconds": fit_seconds(running)})
-            current, running = [], 0.0
-        current.append(frame)
-        running += needed
-
-    if current:
-        chunks.append({"frames": current, "seconds": fit_seconds(running)})
-    return chunks
+def narration_word_budget() -> int:
+    """Words a whole step may use, so its narration fits inside one clip."""
+    speakable = QWEN_MAX_SECONDS - BEAT_SECONDS * FRAMES_PER_STEP[1]
+    return int(speakable * WORDS_PER_SECOND)
 
 
-def _animation_rules(total_frames: int, seconds: str) -> list[str]:
-    return [
+def fit_duration(needed: float) -> int:
+    """A whole number of seconds that covers `needed`, inside the model's range."""
+    return int(max(QWEN_MIN_SECONDS, min(QWEN_MAX_SECONDS, math.ceil(needed))))
+
+
+def build_qwen_prompt(frames: list[dict], duration: int, closing: str) -> str:
+    """The flipbook, laid out as text: every keyframe's SVG and its spoken line."""
+    total = len(frames)
+    parts = [
+        "Animate this hand-drawn flipbook into ONE seamless, continuous video with "
+        "spoken narration.",
+        "",
+        f"You are given {total} keyframes in order. Each keyframe is a complete SVG "
+        "document given as text, together with the narration spoken over it. The SVG is "
+        "the exact artwork for that moment — reproduce its layout, its shapes, its "
+        "wording and its colours faithfully.",
+        "",
         "HOW TO ANIMATE",
         "- The subject is a single sheet of cream school-notebook paper, ruled in pale "
         "blue, seen straight on and filling the frame. The camera never moves.",
@@ -705,154 +777,113 @@ def _animation_rules(total_frames: int, seconds: str) -> list[str]:
         "numbers draw themselves onto the page as if a hand were writing them, and "
         "highlighter sweeps across in one motion. Everything already on the page stays "
         "exactly where it is, at the same size.",
-        "- Speak each keyframe's narration in full, at an unhurried explaining pace, "
-        "and do not move on to the next keyframe until its line has finished. Every "
-        "line must be spoken completely — never trail off or cut a sentence short.",
-        f"- This clip is {seconds} seconds long and carries {total_frames} keyframe(s). "
-        "Pace them so the narration fits comfortably inside it.",
+        "- The result must read as one continuous take of a page being worked on, not as "
+        "a slideshow of separate images.",
+        "",
+        "NARRATION",
+        "- Speak every keyframe's line in full, in order, in a warm unhurried teaching "
+        "voice. Do not paraphrase, do not skip a line, and never trail off or cut a "
+        "sentence short.",
+        f"- The clip is {duration} seconds and the narration has been written to fit it "
+        "with room to spare. Pace it evenly and let it breathe.",
         "",
         "DO NOT add photographic detail, hands, faces, desks, rooms, logos, watermarks or "
         "any text that is not in the SVGs. Flat vector artwork on paper, nothing else.",
+        "",
+        f"CLOSING BEAT: {closing}",
+        "",
+        "=" * 60,
     ]
-
-
-def _keyframe_block(frames: list[dict], offset: int, grand_total: int) -> list[str]:
-    parts = ["", "=" * 60]
-    for i, frame in enumerate(frames, offset + 1):
+    for i, frame in enumerate(frames, 1):
         parts += [
             "",
-            f"KEYFRAME {i} OF {grand_total}",
+            f"KEYFRAME {i} OF {total}",
             f'NARRATION: "{frame["narration"]}"',
             "SVG:",
             frame["svg"],
             "",
             "-" * 60,
         ]
-    return parts
+    return "\n".join(parts)
 
 
-def build_sora_prompt(frames: list[dict], seconds: str, grand_total: int, closing: str) -> str:
-    """The opening clip: establish the page and work through the first keyframes."""
-    parts = [
-        "Animate this hand-drawn flipbook into ONE seamless, continuous video.",
-        "",
-        f"You are given {len(frames)} keyframes in order, of {grand_total} in the full "
-        "lesson. Each keyframe is a complete SVG document given as text, together with the "
-        "narration spoken over it. The SVG is the exact artwork for that moment — reproduce "
-        "its layout, its shapes, its wording and its colours faithfully.",
-        "",
-    ] + _animation_rules(len(frames), seconds)
-    if len(frames) == grand_total:
-        parts += ["", f"CLOSING BEAT: {closing}"]
-    else:
-        parts += ["", "This clip is the OPENING of a longer take. End it mid-work, with the "
-                      "page settled and the camera still, so the next part continues cleanly."]
-    return "\n".join(parts + _keyframe_block(frames, 0, grand_total))
-
-
-def build_extension_prompt(frames: list[dict], seconds: str, offset: int,
-                           grand_total: int, closing: str, is_last: bool) -> str:
-    """A continuation clip: same page, next keyframes written onto it."""
-    parts = [
-        "Continue the video exactly where it left off. This is the SAME sheet of "
-        "notebook paper, in the same position, with everything already written on it "
-        "still there and unchanged. Do not restart, do not re-establish the page, do "
-        "not cut to a new shot.",
-        "",
-        f"Carry on with keyframes {offset + 1} to {offset + len(frames)} of {grand_total}. "
-        "Each is a complete SVG document given as text, together with the narration spoken "
-        "over it. The SVG shows the whole page as it should look at that moment — the marks "
-        "already present from earlier plus the new one this beat adds. Draw only the new "
-        "marks; the rest is already on the page.",
-        "",
-    ] + _animation_rules(len(frames), seconds)
-    if is_last:
-        parts += ["", f"CLOSING BEAT: {closing}"]
-    else:
-        parts += ["", "More follows after this, so end with the page settled and the camera "
-                      "still rather than on a flourish."]
-    return "\n".join(parts + _keyframe_block(frames, offset, grand_total))
-
-
-def _await_video(video, on_progress=None, label=""):
-    """Poll one Sora job to completion."""
-    while video.status in ("queued", "in_progress"):
-        if on_progress:
-            on_progress(f"{label}{video.status.replace('_', ' ')}", video.progress or 0)
-        time.sleep(4)
-        video = sora().videos.retrieve(video.id)
-    if video.status != "completed":
-        detail = getattr(video.error, "message", None) or video.status
-        raise RuntimeError(f"Sora could not render this step: {detail}")
-    return video
-
-
-def create_sora_video(frames: list[dict], output_path: str, closing: str,
+def create_qwen_video(frames: list[dict], output_path: str, closing: str,
                       on_progress=None) -> dict:
-    """Render the whole flipbook, extending the clip until every line is spoken."""
-    import warnings
+    """One DashScope video-synthesis call, polled to completion and downloaded."""
+    import requests
 
-    chunks = plan_chunks(frames)
-    spoken = sum(speaking_seconds(f["narration"]) for f in frames)
-    budget = sum(int(c["seconds"]) for c in chunks)
+    dashscope = dashscope_api()
+    from dashscope import VideoSynthesis
+    from dashscope.common.constants import TaskStatus
+
+    spoken = flipbook_seconds(frames)
+    duration = fit_duration(spoken)
+    prompt = build_qwen_prompt(frames, duration, closing)
     warn_once(
-        "sora",
+        "qwen",
         f"{len(frames)} keyframes, ~{spoken:.0f}s of narration -> "
-        f"{len(chunks)} clip(s) totalling {budget}s "
-        f"(1 create + {len(chunks) - 1} extension(s))",
+        f"one {duration}s {QWEN_MODEL} clip",
     )
 
-    with warnings.catch_warnings():   # the SDK flags the Sora endpoints as deprecated
-        warnings.simplefilter("ignore", DeprecationWarning)
+    started = VideoSynthesis.async_call(
+        model=QWEN_MODEL,
+        prompt=prompt,
+        size=QWEN_SIZE,
+        duration=duration,
+    )
+    if started.status_code != 200 or not started.output:
+        raise RuntimeError(
+            f"DashScope refused the job ({started.code or started.status_code}): "
+            f"{started.message or 'no detail'}"
+        )
 
-        video, offset = None, 0
-        for n, chunk in enumerate(chunks):
-            tag = f"clip {n + 1}/{len(chunks)} "
-            if n == 0:
-                video = sora().videos.create(
-                    model=SORA_MODEL,
-                    prompt=build_sora_prompt(chunk["frames"], chunk["seconds"], len(frames), closing),
-                    seconds=chunk["seconds"],
-                    size=SORA_SIZE,
-                )
-            else:
-                video = sora().videos.extend(
-                    video={"id": video.id},
-                    prompt=build_extension_prompt(
-                        chunk["frames"], chunk["seconds"], offset, len(frames),
-                        closing, is_last=(n == len(chunks) - 1),
-                    ),
-                    seconds=chunk["seconds"],
-                )
-            video = _await_video(video, on_progress, tag)
-            offset += len(chunk["frames"])
+    task = started
+    while True:
+        status = task.output.task_status
+        if status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.UNKNOWN):
+            break
+        if on_progress:
+            on_progress(status.lower().replace("_", " "), 0)
+        time.sleep(5)
+        task = VideoSynthesis.fetch(started)
 
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        sora().videos.download_content(video.id, variant="video").write_to_file(output_path)
+    if task.output.task_status != TaskStatus.SUCCEEDED:
+        detail = task.message or task.output.get("message") or task.output.task_status
+        raise RuntimeError(f"Qwen could not render this step: {detail}")
 
-    # Trust the file over the plan: an extension chain may or may not hand back the
-    # whole take, and the page needs the real length either way.
-    duration = mp4_duration(output_path) or float(budget)
-    if duration + 1.0 < budget:
-        warn_once("sora-short", (
-            f"the downloaded clip is {duration:.1f}s but {budget}s was generated — this "
-            "build of the extensions endpoint returns only the final segment. The earlier "
-            "chunks are still on your OpenAI account by video id."
+    url = task.output.video_url
+    if not url:
+        raise RuntimeError("Qwen reported success but returned no video URL.")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(url, stream=True, timeout=300) as resp:
+        resp.raise_for_status()
+        with open(output_path, "wb") as handle:
+            for chunk in resp.iter_content(chunk_size=1 << 16):
+                handle.write(chunk)
+
+    # Trust the delivered file over the requested length.
+    measured = mp4_duration(output_path) or float(duration)
+    if measured + 1.0 < spoken:
+        warn_once("qwen-short", (
+            f"the clip is {measured:.1f}s but the narration needs about {spoken:.0f}s — "
+            "lower WORDS_PER_SECOND or FRAMES_PER_STEP so the step is written shorter."
         ))
 
     # Narration is paced across the clip in proportion to how long each line takes.
     transcript, cursor = [], 0.0
-    scale = duration / max(spoken, 0.001)
+    scale = measured / max(spoken, 0.001)
     for frame in frames:
         span = speaking_seconds(frame["narration"]) * scale
         transcript.append({
             "start": round(cursor, 2),
-            "end": round(min(cursor + span, duration), 2),
+            "end": round(min(cursor + span, measured), 2),
             "text": frame["narration"],
         })
         cursor += span
 
-    return {"duration": round(duration, 2), "transcript": transcript, "video_id": video.id}
+    return {"duration": round(measured, 2), "transcript": transcript,
+            "task_id": task.output.task_id}
 
 
 def mp4_duration(path: str) -> float | None:
@@ -987,7 +1018,7 @@ def lesson_state(lesson: Lesson) -> dict:
     }
 
 
-SEGMENT_LABELS = ["Writing the next step", "Drawing the flipbook", "Sora animating the page"]
+SEGMENT_LABELS = ["Writing the next step", "Drawing the flipbook", "Qwen animating the page"]
 
 
 def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
@@ -997,9 +1028,9 @@ def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
 
     out = MEDIA_DIR / lesson.sid / f"step_{index}.mp4"
     job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
-    rendered = create_sora_video(
+    rendered = create_qwen_video(
         scenes["frames"], str(out), scenes["closing"],
-        lambda status, pct: job.advance(2, f"Sora {status.replace('_', ' ')} — {pct}%"),
+        lambda status, pct: job.advance(2, f"Qwen is {status}"),
     )
 
     payload = {
@@ -1061,7 +1092,7 @@ def api_start():
         "Reading your problem",
         "Writing a similar problem and its steps",
         "Drawing the flipbook",
-        "Sora animating the page",
+        "Qwen animating the page",
     ]
 
     def work(job: Job) -> dict:
@@ -1075,9 +1106,9 @@ def api_start():
         out = MEDIA_DIR / lesson.sid / "step_0.mp4"
         scenes = build_step_scenes(lesson.plan, 0)
         job.advance(2, f"{len(scenes['frames'])} keyframes drawn")
-        rendered = create_sora_video(
+        rendered = create_qwen_video(
             scenes["frames"], str(out), scenes["closing"],
-            lambda status, pct: job.advance(3, f"Sora {status.replace('_', ' ')} — {pct}%"),
+            lambda status, pct: job.advance(3, f"Qwen is {status}"),
         )
 
         lesson.segments[0] = {
@@ -1171,9 +1202,9 @@ def api_answer():
             stamp = lesson.attempts[index]
             out = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}.mp4"
             job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
-            rendered = create_sora_video(
+            rendered = create_qwen_video(
                 scenes["frames"], str(out), scenes["closing"],
-                lambda status, pct: job.advance(2, f"Sora {status.replace('_', ' ')} — {pct}%"),
+                lambda status, pct: job.advance(2, f"Qwen is {status}"),
             )
 
             payload = {
@@ -1185,7 +1216,7 @@ def api_answer():
             lesson.misses[index] = payload
             return {"correction": payload}
 
-        labels = ["Working out where that came from", "Drawing it on your figure", "Sora animating the page"]
+        labels = ["Working out where that came from", "Drawing it on your figure", "Qwen animating the page"]
         response["correction_job"] = run_job(labels, work).payload()
 
     return jsonify(response)
