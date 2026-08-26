@@ -40,15 +40,16 @@ Qwen knobs live at the top of `app.py`:
 
 | | |
 |---|---|
-| `QWEN_MODEL` | `wan3.0-t2v` — a 30-second ceiling with native synchronised audio. `wan2.7-t2v` is the generally-available fallback but tops out at 15s; drop `QWEN_MAX_SECONDS` to 15 if you switch. |
+| `QWEN_MODEL` | `wan2.7-t2v` — generally available, 1080p, native synchronised audio, 15-second ceiling. `wan3.0-t2v` would double that to 30s but its Model Studio API is still in preview; raise `QWEN_MAX_SECONDS` to 30 if you switch. |
 | `QWEN_MAX_SECONDS` | The clip ceiling, and therefore the narration budget. |
 | `QWEN_SIZE` | `1920*1080`. DashScope spells sizes with a star, not an x. |
 | `DASHSCOPE_REGION` | `intl` points the SDK at the Singapore host; use `cn` for a mainland account. The SDK ships pointed at mainland, so an international key fails until this is right. |
 | `WORDS_PER_SECOND` / `BEAT_SECONDS` | The speaking-pace estimate that turns a narration into a duration. |
 
-**Note:** `wan3.0-t2v` shipped on 24 August 2026 and the Model Studio API for it is
-still in preview, so it may not be enabled on your account yet. If it is rejected,
-set `QWEN_MODEL = "wan2.7-t2v"` and `QWEN_MAX_SECONDS = 15`.
+**Note:** the 15-second ceiling is what makes the narration budget tight — about 25
+words for a whole step. If steps start reading clipped, either lower `FRAMES_PER_STEP`
+(fewer keyframes means fewer inter-line beats eating the clip) or move to
+`wan3.0-t2v` at `QWEN_MAX_SECONDS = 30` once it leaves preview on your account.
 
 ## The pipeline
 
@@ -82,7 +83,7 @@ photo of the problem
    instructions, then KEYFRAME n OF N with its line and its raw SVG
         │
         ▼
-   VideoSynthesis.async_call(model="wan3.0-t2v", prompt=..., size=...,
+   VideoSynthesis.async_call(model="wan2.7-t2v", prompt=..., size=...,
                              duration=<seconds the narration needs>)
    poll VideoSynthesis.fetch() through PENDING → RUNNING → SUCCEEDED
    download output.video_url → step_i.mp4
@@ -146,9 +147,10 @@ the page DOM.
 - **Narration length is estimated, not measured.** `speaking_seconds()` counts words at
   `WORDS_PER_SECOND` and adds a beat per line. It has never heard the voice Qwen will
   use, so the budget is a guess — tune the two constants once you have seen real output.
-- **A 30-second ceiling caps how much a step can say.** About 61 words for a whole step.
-  That is a real pedagogical constraint, not just a technical one: a step needing more
-  gets tightened rather than split.
+- **A 15-second ceiling caps how much a step can say.** About 25 words for a whole
+  step — roughly five per keyframe at the maximum of five. That is a real pedagogical
+  constraint, not just a technical one: a step needing more gets tightened rather than
+  split, so expect terse narration and watch whether it costs clarity on harder steps.
 - **Qwen interprets, it does not rasterise.** The SVG is a very strong hint, not a
   guarantee — expect the wording and geometry to drift from what Claude drew. If a step
   needs exact figures, this is the wrong renderer for it.

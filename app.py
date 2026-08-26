@@ -50,7 +50,7 @@ DASHSCOPE_API_KEY = "sk-REPLACE-WITH-YOUR-KEY"
 
 MODEL = "claude-opus-5"
 
-QWEN_MODEL = "wan3.0-t2v"    # 30s ceiling, native synchronised audio
+QWEN_MODEL = "wan2.7-t2v"    # 15s ceiling, native synchronised audio, generally available
 QWEN_SIZE = "1920*1080"      # DashScope spells sizes with a star, not an x
 DASHSCOPE_REGION = "intl"    # "intl" for the Singapore host, "cn" for mainland
 
@@ -58,7 +58,7 @@ DASHSCOPE_REGION = "intl"    # "intl" for the Singapore host, "cn" for mainland
 # stretching the video to fit the narration we size the narration to fit the video:
 # Claude is handed narration_word_budget() and anything that still overruns is sent
 # back once to be tightened. Nothing is ever cut off mid-sentence.
-QWEN_MAX_SECONDS = 30        # wan3.0-t2v ceiling; wan2.7-t2v tops out at 15
+QWEN_MAX_SECONDS = 15        # wan2.7-t2v ceiling; wan3.0-t2v would allow 30, in preview
 QWEN_MIN_SECONDS = 5
 WORDS_PER_SECOND = 2.4       # unhurried explaining pace
 BEAT_SECONDS = 0.9           # the pause after a line lands
