@@ -593,8 +593,9 @@ const S = {
   sid: null, imageUrl: null, fileName: "", pendingFile: null,
   plan: null, count: CP_COUNT,
   status: [], attempts: 0, firstTry: 0,
-  segments: {},          // index -> {video_url, duration, transcript, checkpoint}
+  segments: {},          // index -> {clips:[{video_url,duration}], duration, transcript, checkpoint}
   playIndex: 0,          // which segment the <video> currently holds
+  clipIndex: 0,          // which clip within that segment
   index: 0,              // which checkpoint is being asked
   mode: "watching",      // watching | question | finished
   feedback: null,        // {correct, text}
@@ -918,10 +919,19 @@ function absorb(state) {
 }
 
 // ── the player ─────────────────────────────────────────────────────────────
+// A step is N clips played back to back. Each opens on the previous one's closing
+// keyframe, so a seam lands on identical artwork and reads as one continuous take.
 function segment(i) { return S.segments[i]; }
+function clipsOf(i) { const s = segment(i); return s ? s.clips || [] : []; }
 function generatedCount() { let n = 0; while (segment(n)) n++; return n; }
 function offsetOf(i) { let t = 0; for (let k = 0; k < i; k++) t += segment(k) ? segment(k).duration : 0; return t; }
 function generatedTotal() { return offsetOf(generatedCount()); }
+/** Seconds before clip `c` inside segment `i`. */
+function clipOffset(i, c) { let t = 0; const cl = clipsOf(i); for (let k = 0; k < c && k < cl.length; k++) t += cl[k].duration; return t; }
+/** Where the playhead sits on the whole-lesson timeline right now. */
+function elapsedNow() {
+  return offsetOf(S.playIndex) + clipOffset(S.playIndex, S.clipIndex) + S.currentTime;
+}
 /** The whole lesson's projected length: what exists, scaled out over every step. */
 function projectedTotal() {
   const n = generatedCount();
@@ -929,19 +939,37 @@ function projectedTotal() {
   return (generatedTotal() / n) * S.count;
 }
 
-function loadSegment(i, autoplay) {
-  const seg = segment(i);
-  if (!seg) return;
-  S.playIndex = i;
-  S.reviewing = false;
-  if (!video.src.endsWith(seg.video_url)) video.src = seg.video_url;
-  video.currentTime = 0;
+/** Point the <video> at one clip, optionally seeking into it, optionally playing. */
+function loadClip(i, c, within, autoplay) {
+  const clips = S.reviewing ? S.correction.clips : clipsOf(i);
+  const clip = clips[c];
+  if (!clip) return;
+  S.playIndex = i; S.clipIndex = c;
+  const wanted = clip.video_url;
+  if (!video.src.endsWith(wanted)) {
+    video.src = wanted;
+    video.addEventListener("loadedmetadata", function once() {
+      video.removeEventListener("loadedmetadata", once);
+      if (within) video.currentTime = within;
+      if (autoplay) play(); else { pause(); render(); }
+    });
+    return;
+  }
+  video.currentTime = within || 0;
   if (autoplay) play(); else { pause(); render(); }
 }
 
-function playCorrection(url) {
+function loadSegment(i, autoplay) {
+  if (!segment(i)) return;
+  S.reviewing = false;
+  loadClip(i, 0, 0, autoplay);
+}
+
+function playCorrection(correction) {
   S.reviewing = true;
-  video.src = url;
+  S.correction = correction;
+  S.clipIndex = 0;
+  video.src = correction.clips[0].video_url;
   video.currentTime = 0;
   play();
 }
@@ -964,14 +992,26 @@ video.addEventListener("ended", onEnded);
 
 function onEnded() {
   S.playing = false;
+
   if (S.reviewing) {
-    // A correction video just finished — back to the question they missed.
+    // Roll through the correction's own clips before handing back the question.
+    if (S.clipIndex + 1 < (S.correction.clips || []).length) {
+      loadClip(S.playIndex, S.clipIndex + 1, 0, true);
+      return;
+    }
     S.reviewing = false;
     loadSegment(S.index, false);
     S.mode = "question";
     render();
     return;
   }
+
+  // Mid-step seam: the next clip opens on this one's closing frame, so just roll on.
+  if (S.clipIndex + 1 < clipsOf(S.playIndex).length) {
+    loadClip(S.playIndex, S.clipIndex + 1, 0, true);
+    return;
+  }
+
   const i = S.playIndex;
   if (S.status[i] === 1 && segment(i + 1)) { loadSegment(i + 1, true); return; }
   if (S.status[i] === 1 && i === S.count - 1) { S.mode = "finished"; render(); return; }
@@ -993,21 +1033,18 @@ function seekTo(target) {
   if (S.reviewing) { video.currentTime = Math.min(target, video.duration || 0); return; }
   const cap = generatedTotal() - 0.05;
   target = Math.max(0, Math.min(target, cap));
+
   let i = 0;
   while (segment(i + 1) && target >= offsetOf(i + 1)) i++;
-  const within = target - offsetOf(i);
-  if (i !== S.playIndex) {
-    const wasPlaying = S.playing;
-    S.playIndex = i;
-    video.src = segment(i).video_url;
-    video.addEventListener("loadedmetadata", function once() {
-      video.removeEventListener("loadedmetadata", once);
-      video.currentTime = within;
-      if (wasPlaying) play();
-    });
-  } else {
-    video.currentTime = within;
-  }
+  let within = target - offsetOf(i);
+
+  // Then find which of that step's clips the moment falls in.
+  const clips = clipsOf(i);
+  let c = 0;
+  while (c + 1 < clips.length && within >= clips[c].duration) { within -= clips[c].duration; c++; }
+
+  const wasPlaying = S.playing;
+  loadClip(i, c, within, wasPlaying);
   render();
 }
 
@@ -1020,7 +1057,7 @@ $("btn-tryagain").addEventListener("click", () => {
   render();
 });
 $("btn-rewatch").addEventListener("click", () => {
-  if (S.correction) playCorrection(S.correction.video_url);
+  if (S.correction) playCorrection(S.correction);
   else loadSegment(S.index, true);   // no correction yet — replay the step itself
 });
 $("btn-continue").addEventListener("click", advance);
@@ -1038,6 +1075,7 @@ function resetToUpload() {
     sid: null, plan: null, segments: {}, status: [], index: 0, playIndex: 0,
     mode: "watching", feedback: null, correction: null, correctionPending: false,
     reviewing: false, selected: null, textAnswer: "", pendingFile: null, fileName: "",
+    clipIndex: 0,
     currentTime: 0, duration: 0, firstTry: 0, attempts: 0,
   });
   video.removeAttribute("src"); video.load();
@@ -1178,7 +1216,7 @@ function render() {
 
   // scrubber, on the whole-lesson timeline
   const total = projectedTotal();
-  const elapsed = S.reviewing ? offsetOf(S.playIndex) : offsetOf(S.playIndex) + S.currentTime;
+  const elapsed = S.reviewing ? offsetOf(S.playIndex) : elapsedNow();
   const lockPct = Math.min(100, (generatedTotal() / total) * 100);
   const playPct = Math.min(lockPct, (elapsed / total) * 100);
   $("scrub-lock").style.left = lockPct + "%";
@@ -1205,8 +1243,10 @@ function render() {
   const transcript = $("transcript");
   transcript.innerHTML = "";
   if (seg && seg.transcript && !S.reviewing) {
+    // The transcript spans the whole step, but currentTime is inside one clip.
+    const inSegment = clipOffset(S.playIndex, S.clipIndex) + S.currentTime;
     seg.transcript.forEach((line) => {
-      const live = S.currentTime >= line.start && S.currentTime < line.end;
+      const live = inSegment >= line.start && inSegment < line.end;
       transcript.appendChild(el("div", { class: "tline" + (live ? " on" : "") }, "“" + line.text + "”"));
     });
   }

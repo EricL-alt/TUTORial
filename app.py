@@ -54,12 +54,14 @@ QWEN_MODEL = "wan2.7-t2v"    # 15s ceiling, native synchronised audio, generally
 QWEN_SIZE = "1920*1080"      # DashScope spells sizes with a star, not an x
 DASHSCOPE_REGION = "intl"    # "intl" for the Singapore host, "cn" for mainland
 
-# A Qwen clip is one call with no extensions endpoint to chain onto, so rather than
-# stretching the video to fit the narration we size the narration to fit the video:
-# Claude is handed narration_word_budget() and anything that still overruns is sent
-# back once to be tightened. Nothing is ever cut off mid-sentence.
+# A single Qwen clip caps at QWEN_MAX_SECONDS, which is far too little for a whole
+# step. DashScope has no extensions endpoint, but it does not need one: because the
+# flipbook only ever accumulates, the LAST keyframe of one clip is already a valid
+# opening frame for the next. So a step is rendered as N clips that each open on the
+# previous clip's closing frame, and the player runs them back to back as one segment.
 QWEN_MAX_SECONDS = 15        # wan2.7-t2v ceiling; wan3.0-t2v would allow 30, in preview
 QWEN_MIN_SECONDS = 5
+MAX_CLIPS_PER_STEP = 4       # the ceiling on how long one step may run
 WORDS_PER_SECOND = 2.4       # unhurried explaining pace
 BEAT_SECONDS = 0.9           # the pause after a line lands
 
@@ -520,19 +522,28 @@ TIGHTEN_SCHEMA = {
 
 
 def fit_narration(payload: dict) -> dict:
-    """Keep a step inside one clip by shortening its narration, never by cutting it.
+    """Shorten over-long narration rather than let the video model truncate it.
 
-    Only fires when Claude overshot the budget it was given, which the prompts make
-    unlikely — but a step that overran would be truncated mid-sentence by the video
-    model, so it is worth one extra call to avoid.
+    Two ways a step can overrun. It can be too long overall, past what
+    MAX_CLIPS_PER_STEP clips can carry. Or one single line can be longer than a whole
+    clip, in which case no amount of splitting saves it — a clip cannot be stretched
+    past QWEN_MAX_SECONDS, so that line would be cut off mid-sentence. Either is worth
+    one extra call to avoid.
     """
     frames = payload["frames"]
     spoken = flipbook_seconds(frames)
-    if spoken <= QWEN_MAX_SECONDS:
+    ceiling = QWEN_MAX_SECONDS * MAX_CLIPS_PER_STEP
+    per_line = QWEN_MAX_SECONDS - BEAT_SECONDS      # one line alone in its own clip
+    longest = max(speaking_seconds(f["narration"]) for f in frames)
+    if spoken <= ceiling and longest <= per_line:
         return payload
 
     budget = narration_word_budget()
-    warn_once("tighten", f"narration ran to ~{spoken:.0f}s (cap {QWEN_MAX_SECONDS}s); asking for a shorter cut")
+    if longest > per_line:
+        warn_once("tighten", f"one line runs ~{longest:.0f}s, past the {per_line:.0f}s a single "
+                             "clip can hold; asking for a shorter cut")
+    else:
+        warn_once("tighten", f"narration ran to ~{spoken:.0f}s (cap {ceiling:.0f}s); asking for a shorter cut")
     lines = "\n".join(f'{i + 1}. "{f["narration"]}"' for i, f in enumerate(frames))
     try:
         result = ask_json(
@@ -544,8 +555,11 @@ def fit_narration(payload: dict) -> dict:
             ),
             content=[{"type": "text", "text":
                       f"These {len(frames)} lines must be speakable in under "
-                      f"{QWEN_MAX_SECONDS} seconds — about {budget} words in total, "
-                      f"currently {sum(len(f['narration'].split()) for f in frames)}.\n\n{lines}"}],
+                      f"{ceiling:.0f} seconds — about {budget} words in total, "
+                      f"currently {sum(len(f['narration'].split()) for f in frames)}. "
+                      f"No single line may run past {int(per_line * WORDS_PER_SECOND)} words, "
+                      f"because each is spoken over one short clip that cannot be "
+                      f"stretched.\n\n{lines}"}],
             schema=TIGHTEN_SCHEMA,
             max_tokens=8000,
         )
@@ -553,7 +567,8 @@ def fit_narration(payload: dict) -> dict:
         if len(tightened) == len(frames) and all(t.strip() for t in tightened):
             for frame, line in zip(frames, tightened):
                 frame["narration"] = line.strip()
-            warn_once("tighten", f"rewritten to ~{flipbook_seconds(frames):.0f}s")
+            warn_once("tighten", f"rewritten to ~{flipbook_seconds(frames):.0f}s, "
+                                 f"longest line ~{max(speaking_seconds(f['narration']) for f in frames):.0f}s")
     except Exception as exc:
         warn_once("tighten", f"could not shorten the narration ({exc}); sending it as written")
     return payload
@@ -582,7 +597,7 @@ def build_plan(problem_image: Path) -> dict:
 def build_step_scenes(plan: dict, index: int) -> dict:
     step = plan["steps"][index]
     checkpoint = plan["checkpoints"][index]
-    budget = narration_word_budget()
+    budget, clip_budget = narration_word_budget(), clip_word_budget()
     prior = "\n".join(
         f"  step {i + 1}. {s['title']} — {s['work']}" for i, s in enumerate(plan["steps"][:index])
     ) or "  (none — this is the opening step)"
@@ -616,11 +631,13 @@ own problem. It must not restate the question — the interface asks it.
 Draw {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} keyframes: the step being made on the similar
 problem, then the handoff. Each keyframe is one SVG plus the line spoken over it.
 
-LENGTH — this is a hard limit, not a style note
-The whole step becomes ONE video clip of at most {QWEN_MAX_SECONDS} seconds, and the narration
-has to be spoken inside it. Keep every narration line in this step to {budget} words IN TOTAL,
-across all keyframes combined. Write tight, plain sentences; say the one thing this step is
-for and stop. A step that overruns gets sent back to be cut, so write it short the first time."""
+LENGTH
+The step is rendered as a run of short clips played back to back, so you are not writing to a
+single {QWEN_MAX_SECONDS}-second window — say what the step actually needs. Keep the whole
+step under {budget} words across all keyframes combined, in plain spoken sentences, and no
+SINGLE keyframe's line past {clip_budget} words — each line is spoken over one short clip that
+cannot be stretched. Anything past that gets sent back to be cut, so stop when the step is
+taught rather than padding."""
 
     return fit_narration(normalize_frames(
         ask_json(system, [{"type": "text", "text": user}], SCENE_SCHEMA, max_tokens=32000)))
@@ -629,7 +646,7 @@ for and stop. A step that overruns gets sent back to be cut, so write it short t
 def build_miss_scenes(plan: dict, index: int, given: str, misconception: str,
                       problem_image: Path) -> dict:
     checkpoint = plan["checkpoints"][index]
-    budget = narration_word_budget()
+    budget, clip_budget = narration_word_budget(), clip_word_budget()
 
     system = (
         "You write the scenes of a TUTORial correction video. A student answered a checkpoint "
@@ -657,9 +674,10 @@ Write {FRAMES_PER_STEP[0]}–{FRAMES_PER_STEP[1]} scenes, working on THEIR probl
 Be kind and specific. Never say "you should know this", never call the mistake careless, and never
 give away the answer — they are about to attempt it again.
 
-LENGTH — this is a hard limit, not a style note
-The whole correction becomes ONE video clip of at most {QWEN_MAX_SECONDS} seconds. Keep every
-narration line to {budget} words IN TOTAL across all keyframes combined."""
+LENGTH
+The correction is rendered as a run of short clips played back to back, so you are not writing
+to a single {QWEN_MAX_SECONDS}-second window. Keep the whole correction under {budget} words
+across all keyframes combined, and no SINGLE keyframe's line past {clip_budget} words."""
 
     return fit_narration(normalize_frames(ask_json(
         system,
@@ -745,10 +763,57 @@ def flipbook_seconds(frames: list[dict]) -> float:
     return sum(speaking_seconds(f["narration"]) for f in frames)
 
 
-def narration_word_budget() -> int:
-    """Words a whole step may use, so its narration fits inside one clip."""
+def clip_word_budget() -> int:
+    """Words that fit in ONE clip, once the pauses between lines are paid for."""
     speakable = QWEN_MAX_SECONDS - BEAT_SECONDS * FRAMES_PER_STEP[1]
     return int(speakable * WORDS_PER_SECOND)
+
+
+def narration_word_budget() -> int:
+    """Words a whole step may use, across every clip it is allowed to span."""
+    return clip_word_budget() * MAX_CLIPS_PER_STEP
+
+
+def plan_clips(frames: list[dict]) -> list[dict]:
+    """Split the flipbook into clips that each fit inside QWEN_MAX_SECONDS.
+
+    Each clip after the first opens on the previous clip's closing keyframe — the
+    page as the student last saw it — so the seam between two files lands on
+    identical artwork. That carried frame is scenery, not narration: it has already
+    been spoken over, and the prompt says so.
+    """
+    clips: list[dict] = []
+    current: list[dict] = []
+    running = 0.0
+
+    for frame in frames:
+        needed = speaking_seconds(frame["narration"])
+        # A carried opening frame costs a little screen time before the first line.
+        overhead = BEAT_SECONDS if (clips or current) and not current else 0.0
+        if current and running + needed > QWEN_MAX_SECONDS:
+            clips.append({"frames": current, "opening": current[-1]["svg"]})
+            current, running = [], 0.0
+            overhead = BEAT_SECONDS
+        current.append(frame)
+        running += needed + overhead
+
+    if current:
+        clips.append({"frames": current, "opening": current[-1]["svg"]})
+
+    # `opening` is what this clip HANDS ON; shift it so each clip carries what it
+    # RECEIVES, and the first clip receives nothing.
+    handed = None
+    for clip in clips:
+        closing, clip["opening"] = clip["opening"], handed
+        handed = closing
+
+    # MAX_CLIPS_PER_STEP bounds the word budget handed to Claude, and fit_narration
+    # enforces it upstream. If something still lands over, render the extra clip:
+    # dropping a keyframe would lose teaching, which is the whole point of splitting.
+    if len(clips) > MAX_CLIPS_PER_STEP:
+        warn_once("clips", f"a step needed {len(clips)} clips, over the {MAX_CLIPS_PER_STEP} "
+                           "budgeted — rendering them all rather than dropping a keyframe")
+    return clips
 
 
 def fit_duration(needed: float) -> int:
@@ -756,14 +821,33 @@ def fit_duration(needed: float) -> int:
     return int(max(QWEN_MIN_SECONDS, min(QWEN_MAX_SECONDS, math.ceil(needed))))
 
 
-def build_qwen_prompt(frames: list[dict], duration: int, closing: str) -> str:
-    """The flipbook, laid out as text: every keyframe's SVG and its spoken line."""
-    total = len(frames)
+def build_qwen_prompt(clip: dict, index: int, total_clips: int, duration: int,
+                      closing: str) -> str:
+    """One clip's prompt: what it opens on, its keyframes, and how to animate them."""
+    frames = clip["frames"]
+    is_last = index == total_clips - 1
     parts = [
         "Animate this hand-drawn flipbook into ONE seamless, continuous video with "
         "spoken narration.",
         "",
-        f"You are given {total} keyframes in order. Each keyframe is a complete SVG "
+    ]
+
+    if clip["opening"] is not None:
+        parts += [
+            f"This is part {index + 1} of {total_clips} of one continuous take. It opens "
+            "on the OPENING FRAME below — the page exactly as the previous part left it, "
+            "already written on. Start there, held still, and carry straight on.",
+            "",
+            "OPENING FRAME — already on the page. Do NOT narrate it, do NOT redraw it, "
+            "and do NOT re-establish the shot. It is where you begin.",
+            clip["opening"],
+            "",
+            "-" * 60,
+            "",
+        ]
+
+    parts += [
+        f"You are given {len(frames)} keyframes in order. Each keyframe is a complete SVG "
         "document given as text, together with the narration spoken over it. The SVG is "
         "the exact artwork for that moment — reproduce its layout, its shapes, its "
         "wording and its colours faithfully.",
@@ -790,14 +874,19 @@ def build_qwen_prompt(frames: list[dict], duration: int, closing: str) -> str:
         "DO NOT add photographic detail, hands, faces, desks, rooms, logos, watermarks or "
         "any text that is not in the SVGs. Flat vector artwork on paper, nothing else.",
         "",
-        f"CLOSING BEAT: {closing}",
-        "",
-        "=" * 60,
     ]
+
+    if is_last:
+        parts += [f"CLOSING BEAT: {closing}"]
+    else:
+        parts += ["END STILL: the next part opens on this clip's final frame, so finish "
+                  "with the page settled and the camera still — no flourish, no fade out."]
+
+    parts += ["", "=" * 60]
     for i, frame in enumerate(frames, 1):
         parts += [
             "",
-            f"KEYFRAME {i} OF {total}",
+            f"KEYFRAME {i} OF {len(frames)}",
             f'NARRATION: "{frame["narration"]}"',
             "SVG:",
             frame["svg"],
@@ -807,23 +896,20 @@ def build_qwen_prompt(frames: list[dict], duration: int, closing: str) -> str:
     return "\n".join(parts)
 
 
-def create_qwen_video(frames: list[dict], output_path: str, closing: str,
-                      on_progress=None) -> dict:
-    """One DashScope video-synthesis call, polled to completion and downloaded."""
+def render_one_clip(clip: dict, index: int, total_clips: int, closing: str,
+                    output_path: str, on_progress=None) -> float:
+    """Submit one clip, poll it, download it. Returns its measured length."""
     import requests
 
-    dashscope = dashscope_api()
+    dashscope_api()
     from dashscope import VideoSynthesis
     from dashscope.common.constants import TaskStatus
 
-    spoken = flipbook_seconds(frames)
-    duration = fit_duration(spoken)
-    prompt = build_qwen_prompt(frames, duration, closing)
-    warn_once(
-        "qwen",
-        f"{len(frames)} keyframes, ~{spoken:.0f}s of narration -> "
-        f"one {duration}s {QWEN_MODEL} clip",
-    )
+    needed = sum(speaking_seconds(f["narration"]) for f in clip["frames"])
+    if clip["opening"] is not None:
+        needed += BEAT_SECONDS
+    duration = fit_duration(needed)
+    prompt = build_qwen_prompt(clip, index, total_clips, duration, closing)
 
     started = VideoSynthesis.async_call(
         model=QWEN_MODEL,
@@ -837,53 +923,64 @@ def create_qwen_video(frames: list[dict], output_path: str, closing: str,
             f"{started.message or 'no detail'}"
         )
 
-    task = started
+    task, label = started, f"part {index + 1}/{total_clips} "
     while True:
         status = task.output.task_status
         if status in (TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.UNKNOWN):
             break
         if on_progress:
-            on_progress(status.lower().replace("_", " "), 0)
+            on_progress(f"{label}{status.lower()}", 0)
         time.sleep(5)
         task = VideoSynthesis.fetch(started)
 
     if task.output.task_status != TaskStatus.SUCCEEDED:
-        detail = task.message or task.output.get("message") or task.output.task_status
-        raise RuntimeError(f"Qwen could not render this step: {detail}")
-
-    url = task.output.video_url
-    if not url:
-        raise RuntimeError("Qwen reported success but returned no video URL.")
+        detail = task.message or task.output.task_status
+        raise RuntimeError(f"Qwen could not render part {index + 1}: {detail}")
+    if not task.output.video_url:
+        raise RuntimeError(f"Qwen reported success on part {index + 1} but returned no video URL.")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=300) as resp:
+    with requests.get(task.output.video_url, stream=True, timeout=300) as resp:
         resp.raise_for_status()
         with open(output_path, "wb") as handle:
             for chunk in resp.iter_content(chunk_size=1 << 16):
                 handle.write(chunk)
 
-    # Trust the delivered file over the requested length.
-    measured = mp4_duration(output_path) or float(duration)
-    if measured + 1.0 < spoken:
-        warn_once("qwen-short", (
-            f"the clip is {measured:.1f}s but the narration needs about {spoken:.0f}s — "
-            "lower WORDS_PER_SECOND or FRAMES_PER_STEP so the step is written shorter."
-        ))
+    return mp4_duration(output_path) or float(duration)
 
-    # Narration is paced across the clip in proportion to how long each line takes.
+
+def create_qwen_video(frames: list[dict], out_stem: Path, url_stem: str, closing: str,
+                      on_progress=None) -> dict:
+    """Render a whole step as N chained clips the player runs back to back."""
+    clips = plan_clips(frames)
+    spoken = flipbook_seconds(frames)
+    warn_once(
+        "qwen",
+        f"{len(frames)} keyframes, ~{spoken:.0f}s of narration -> {len(clips)} clip(s) "
+        f"of at most {QWEN_MAX_SECONDS}s, each opening on the last frame of the one before",
+    )
+
+    rendered, total = [], 0.0
+    for i, clip in enumerate(clips):
+        path = f"{out_stem}_{i}.mp4"
+        seconds = render_one_clip(clip, i, len(clips), closing, path, on_progress)
+        rendered.append({"video_url": f"{url_stem}_{i}.mp4", "duration": round(seconds, 2)})
+        total += seconds
+
+    # Narration is paced across the whole segment in proportion to how long each line
+    # takes, so the transcript follows the student across the seams.
     transcript, cursor = [], 0.0
-    scale = measured / max(spoken, 0.001)
+    scale = total / max(spoken, 0.001)
     for frame in frames:
         span = speaking_seconds(frame["narration"]) * scale
         transcript.append({
             "start": round(cursor, 2),
-            "end": round(min(cursor + span, measured), 2),
+            "end": round(min(cursor + span, total), 2),
             "text": frame["narration"],
         })
         cursor += span
 
-    return {"duration": round(measured, 2), "transcript": transcript,
-            "task_id": task.output.task_id}
+    return {"clips": rendered, "duration": round(total, 2), "transcript": transcript}
 
 
 def mp4_duration(path: str) -> float | None:
@@ -1026,16 +1123,18 @@ def generate_segment(job: Job, lesson: Lesson, index: int) -> dict:
     job.advance(0, f"Step {index + 1} of {len(lesson.plan['steps'])}")
     scenes = build_step_scenes(lesson.plan, index)
 
-    out = MEDIA_DIR / lesson.sid / f"step_{index}.mp4"
     job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
     rendered = create_qwen_video(
-        scenes["frames"], str(out), scenes["closing"],
-        lambda status, pct: job.advance(2, f"Qwen is {status}"),
+        scenes["frames"],
+        MEDIA_DIR / lesson.sid / f"step_{index}",
+        f"/media/{lesson.sid}/step_{index}",
+        scenes["closing"],
+        lambda status, pct: job.advance(2, f"Qwen is rendering {status}"),
     )
 
     payload = {
         "index": index,
-        "video_url": f"/media/{lesson.sid}/step_{index}.mp4",
+        "clips": rendered["clips"],
         "duration": rendered["duration"],
         "transcript": rendered["transcript"],
         "checkpoint": public_checkpoint(lesson.plan["checkpoints"][index], index),
@@ -1103,17 +1202,19 @@ def api_start():
         job.advance(1, lesson.plan["original"]["subject"])
         time.sleep(0.2)  # let the checklist tick over visibly
 
-        out = MEDIA_DIR / lesson.sid / "step_0.mp4"
         scenes = build_step_scenes(lesson.plan, 0)
         job.advance(2, f"{len(scenes['frames'])} keyframes drawn")
         rendered = create_qwen_video(
-            scenes["frames"], str(out), scenes["closing"],
-            lambda status, pct: job.advance(3, f"Qwen is {status}"),
+            scenes["frames"],
+            MEDIA_DIR / lesson.sid / "step_0",
+            f"/media/{lesson.sid}/step_0",
+            scenes["closing"],
+            lambda status, pct: job.advance(3, f"Qwen is rendering {status}"),
         )
 
         lesson.segments[0] = {
             "index": 0,
-            "video_url": f"/media/{lesson.sid}/step_0.mp4",
+            "clips": rendered["clips"],
             "duration": rendered["duration"],
             "transcript": rendered["transcript"],
                 "checkpoint": public_checkpoint(lesson.plan["checkpoints"][0], 0),
@@ -1200,16 +1301,18 @@ def api_answer():
             scenes = build_miss_scenes(lesson.plan, index, given_text, misconception, lesson.image)
 
             stamp = lesson.attempts[index]
-            out = MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}.mp4"
             job.advance(1, f"{len(scenes['frames'])} keyframes drawn")
             rendered = create_qwen_video(
-                scenes["frames"], str(out), scenes["closing"],
-                lambda status, pct: job.advance(2, f"Qwen is {status}"),
+                scenes["frames"],
+                MEDIA_DIR / lesson.sid / f"miss_{index}_{stamp}",
+                f"/media/{lesson.sid}/miss_{index}_{stamp}",
+                scenes["closing"],
+                lambda status, pct: job.advance(2, f"Qwen is rendering {status}"),
             )
 
             payload = {
                 "index": index,
-                "video_url": f"/media/{lesson.sid}/miss_{index}_{stamp}.mp4",
+                "clips": rendered["clips"],
                 "duration": rendered["duration"],
                 "transcript": rendered["transcript"],
             }
