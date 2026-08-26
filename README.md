@@ -37,8 +37,9 @@ Caveat) into `static/fonts/`. They are only a reference for the SVG Claude write
 the frames themselves are rendered by Sora, so an offline first run costs nothing.
 
 Sora knobs live at the top of `app.py`: `SORA_MODEL` (`sora-2` or `sora-2-pro`),
-`SORA_SECONDS` (the API accepts only `"4"`, `"8"` or `"12"`) and `SORA_SIZE`
-(`1280x720` landscape, to match the taped-in player).
+`SORA_SIZE` (`1280x720` landscape, to match the taped-in player), and the pacing
+constants `WORDS_PER_SECOND` / `BEAT_SECONDS` that decide how long a step's narration
+needs. A single clip caps at 20 seconds, so longer steps are chained — see below.
 
 ## The pipeline
 
@@ -68,14 +69,19 @@ photo of the problem
   └─────────────────────────────────────────────────────────────┘
         │
         ▼                                  create_sora_video()
-   build_sora_prompt() lays the whole flipbook out as text:
-   the animation instructions, then KEYFRAME n OF N with its
-   narration and its raw SVG, in order
+   plan_chunks() splits the flipbook so each chunk's narration fits
+   inside one clip (20s is Sora's ceiling), rounding up to an allowed
+   length of 4, 8, 12, 16 or 20 seconds
         │
         ▼
-   client.videos.create(model="sora-2", prompt=..., seconds="12", size="1280x720")
+   chunk 1   videos.create(model="sora-2", prompt=..., seconds=..., size=...)
+   chunk 2   videos.extend(video={"id": previous}, prompt=..., seconds=...)
+   chunk n   ... each continuing the one before  (POST /v1/videos/extensions)
+        │
+        ▼
    poll retrieve() through queued → in_progress → completed
    download_content(id, variant="video").write_to_file(step_i.mp4)
+   mp4_duration() reads the real length out of the file's mvhd atom
         │
         ▼
    video plays → stops at the checkpoint → student answers
@@ -90,6 +96,13 @@ for that beat and animates between beats, so new labels and lines appear to be w
 onto one continuous page rather than cutting between slides. `SVG_STYLE_RULES` pins
 down the notebook substrate, the palette, the three type voices, and the accumulate-only
 flipbook rule that makes the interpolation legible.
+
+**Why the chaining exists.** A single Sora clip tops out at 20 seconds, which routinely
+ends before a step has finished being explained — the video would stop mid-sentence.
+So the flipbook is packed into as many clips as the narration actually needs and every
+clip after the first is appended with `POST /v1/videos/extensions`, which takes the
+completed clip as context. Each extension prompt carries only its own keyframes and
+opens by telling Sora to continue on the same page without re-establishing the shot.
 
 ## Layout
 
@@ -123,9 +136,10 @@ the page DOM.
 - **Sessions live in memory.** A restart empties them; the media on disk is orphaned.
   Fine for the prototype, wrong for anything else.
 - **No auth, no rate limiting, two hardcoded keys.** `app.run()` is the dev server.
-- **Segments are a fixed length.** Sora accepts only 4, 8 or 12 seconds, so every step
-  gets the same budget regardless of how much it has to say, and the narration is paced
-  evenly across it rather than timed to a real voice track.
+- **Narration length is estimated, not measured.** `speaking_seconds()` counts words at
+  `WORDS_PER_SECOND` and adds a beat per line, then rounds each chunk up to the next
+  allowed clip length. It errs long — a step needing 49s is given 64s — so nothing gets
+  cut off, but some clips end with dead air. Tune the two constants against real output.
 - **Sora interprets, it does not rasterise.** The SVG is a very strong hint, not a
   guarantee — expect the wording and geometry to drift from what Claude drew. If a step
   needs exact figures, this is the wrong renderer for it.

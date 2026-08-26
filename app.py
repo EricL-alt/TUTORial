@@ -50,8 +50,17 @@ OPENAI_API_KEY = "sk-proj-REPLACE-WITH-YOUR-KEY"
 MODEL = "claude-opus-5"
 
 SORA_MODEL = "sora-2"        # or "sora-2-pro"
-SORA_SECONDS = "12"          # the API accepts "4", "8" or "12"
 SORA_SIZE = "1280x720"       # landscape, to match the taped-in player
+
+# One Sora clip cannot outlast SORA_MAX_SECONDS, which is regularly shorter than the
+# narration needs — so a step is split across clips and chained with the extensions
+# endpoint. These are the lengths the API accepts: the SDK's VideoSeconds alias is
+# stale at ("4", "8", "12"), but VideoExtendParams documents 16 and 20 and Python does
+# not enforce a Literal at runtime, so the wider set goes through.
+SORA_ALLOWED_SECONDS = (4, 8, 12, 16, 20)
+SORA_MAX_SECONDS = SORA_ALLOWED_SECONDS[-1]
+WORDS_PER_SECOND = 2.4       # unhurried explaining pace
+BEAT_SECONDS = 0.9           # the pause after a line lands
 
 CHECKPOINT_COUNT = 6          # the video stops this many times
 FRAMES_PER_STEP = (3, 5)      # flipbook keyframes Claude draws per step
@@ -616,10 +625,11 @@ THE STUDENT WROTE: {given}"""
 # ─────────────────────────────────────────────────────────────────────────────
 # SCENES → VIDEO (Sora)
 #
-# Claude draws the step as a flipbook: a handful of SVG keyframes, each with the
-# narration that plays over it. All of it goes into a single Sora prompt as text,
-# and Sora animates between the keyframes into one seamless segment. No local
-# rendering, no ffmpeg, nothing between Claude's frames and the finished MP4.
+# Claude draws the step as a flipbook: SVG keyframes, each with the narration
+# spoken over it. Sora renders a clip of at most SORA_MAX_SECONDS, which is
+# routinely shorter than the narration needs — so the flipbook is split into
+# chunks that each fit one clip, and every chunk after the first is appended with
+# POST /v1/videos/extensions until every line has been covered.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _warned: set[str] = set()
@@ -648,17 +658,44 @@ def sora():
     return _openai
 
 
-def build_sora_prompt(frames: list[dict], closing: str) -> str:
-    """The flipbook, laid out as text for Sora: every keyframe's SVG and its line."""
-    total = len(frames)
-    parts = [
-        "Animate this hand-drawn flipbook into ONE seamless, continuous video.",
-        "",
-        f"You are given {total} keyframes in order. Each keyframe is a complete SVG "
-        "document given as text, together with the narration spoken over it. The SVG is "
-        "the exact artwork for that moment — reproduce its layout, its shapes, its "
-        "wording and its colours faithfully.",
-        "",
+def speaking_seconds(narration: str) -> float:
+    """How long this line takes to say, plus a beat to land on."""
+    return len(narration.split()) / WORDS_PER_SECOND + BEAT_SECONDS
+
+
+def fit_seconds(needed: float) -> str:
+    """The shortest clip length Sora offers that still covers `needed`."""
+    for allowed in SORA_ALLOWED_SECONDS:
+        if allowed >= needed:
+            return str(allowed)
+    return str(SORA_ALLOWED_SECONDS[-1])
+
+
+def plan_chunks(frames: list[dict]) -> list[dict]:
+    """Split the flipbook so each chunk's narration fits inside one Sora clip.
+
+    A frame whose line is longer than a whole clip still gets its own chunk —
+    it is the most we can give it — but nothing is ever dropped.
+    """
+    chunks: list[dict] = []
+    current: list[dict] = []
+    running = 0.0
+
+    for frame in frames:
+        needed = speaking_seconds(frame["narration"])
+        if current and running + needed > SORA_MAX_SECONDS:
+            chunks.append({"frames": current, "seconds": fit_seconds(running)})
+            current, running = [], 0.0
+        current.append(frame)
+        running += needed
+
+    if current:
+        chunks.append({"frames": current, "seconds": fit_seconds(running)})
+    return chunks
+
+
+def _animation_rules(total_frames: int, seconds: str) -> list[str]:
+    return [
         "HOW TO ANIMATE",
         "- The subject is a single sheet of cream school-notebook paper, ruled in pale "
         "blue, seen straight on and filling the frame. The camera never moves.",
@@ -668,64 +705,181 @@ def build_sora_prompt(frames: list[dict], closing: str) -> str:
         "numbers draw themselves onto the page as if a hand were writing them, and "
         "highlighter sweeps across in one motion. Everything already on the page stays "
         "exactly where it is, at the same size.",
-        "- The result must read as one continuous take of a page being worked on, not as "
-        "a slideshow of separate images.",
-        f"- Total length: about {SORA_SECONDS} seconds, paced evenly across the {total} keyframes.",
+        "- Speak each keyframe's narration in full, at an unhurried explaining pace, "
+        "and do not move on to the next keyframe until its line has finished. Every "
+        "line must be spoken completely — never trail off or cut a sentence short.",
+        f"- This clip is {seconds} seconds long and carries {total_frames} keyframe(s). "
+        "Pace them so the narration fits comfortably inside it.",
         "",
         "DO NOT add photographic detail, hands, faces, desks, rooms, logos, watermarks or "
         "any text that is not in the SVGs. Flat vector artwork on paper, nothing else.",
-        "",
-        f"CLOSING BEAT: {closing}",
-        "",
-        "=" * 60,
     ]
-    for i, frame in enumerate(frames, 1):
+
+
+def _keyframe_block(frames: list[dict], offset: int, grand_total: int) -> list[str]:
+    parts = ["", "=" * 60]
+    for i, frame in enumerate(frames, offset + 1):
         parts += [
             "",
-            f"KEYFRAME {i} OF {total}",
+            f"KEYFRAME {i} OF {grand_total}",
             f'NARRATION: "{frame["narration"]}"',
             "SVG:",
             frame["svg"],
             "",
             "-" * 60,
         ]
-    return "\n".join(parts)
+    return parts
+
+
+def build_sora_prompt(frames: list[dict], seconds: str, grand_total: int, closing: str) -> str:
+    """The opening clip: establish the page and work through the first keyframes."""
+    parts = [
+        "Animate this hand-drawn flipbook into ONE seamless, continuous video.",
+        "",
+        f"You are given {len(frames)} keyframes in order, of {grand_total} in the full "
+        "lesson. Each keyframe is a complete SVG document given as text, together with the "
+        "narration spoken over it. The SVG is the exact artwork for that moment — reproduce "
+        "its layout, its shapes, its wording and its colours faithfully.",
+        "",
+    ] + _animation_rules(len(frames), seconds)
+    if len(frames) == grand_total:
+        parts += ["", f"CLOSING BEAT: {closing}"]
+    else:
+        parts += ["", "This clip is the OPENING of a longer take. End it mid-work, with the "
+                      "page settled and the camera still, so the next part continues cleanly."]
+    return "\n".join(parts + _keyframe_block(frames, 0, grand_total))
+
+
+def build_extension_prompt(frames: list[dict], seconds: str, offset: int,
+                           grand_total: int, closing: str, is_last: bool) -> str:
+    """A continuation clip: same page, next keyframes written onto it."""
+    parts = [
+        "Continue the video exactly where it left off. This is the SAME sheet of "
+        "notebook paper, in the same position, with everything already written on it "
+        "still there and unchanged. Do not restart, do not re-establish the page, do "
+        "not cut to a new shot.",
+        "",
+        f"Carry on with keyframes {offset + 1} to {offset + len(frames)} of {grand_total}. "
+        "Each is a complete SVG document given as text, together with the narration spoken "
+        "over it. The SVG shows the whole page as it should look at that moment — the marks "
+        "already present from earlier plus the new one this beat adds. Draw only the new "
+        "marks; the rest is already on the page.",
+        "",
+    ] + _animation_rules(len(frames), seconds)
+    if is_last:
+        parts += ["", f"CLOSING BEAT: {closing}"]
+    else:
+        parts += ["", "More follows after this, so end with the page settled and the camera "
+                      "still rather than on a flourish."]
+    return "\n".join(parts + _keyframe_block(frames, offset, grand_total))
+
+
+def _await_video(video, on_progress=None, label=""):
+    """Poll one Sora job to completion."""
+    while video.status in ("queued", "in_progress"):
+        if on_progress:
+            on_progress(f"{label}{video.status.replace('_', ' ')}", video.progress or 0)
+        time.sleep(4)
+        video = sora().videos.retrieve(video.id)
+    if video.status != "completed":
+        detail = getattr(video.error, "message", None) or video.status
+        raise RuntimeError(f"Sora could not render this step: {detail}")
+    return video
 
 
 def create_sora_video(frames: list[dict], output_path: str, closing: str,
                       on_progress=None) -> dict:
-    """Send the flipbook to Sora and save the finished segment."""
-    prompt = build_sora_prompt(frames, closing)
-    warn_once("sora", f"prompt is {len(prompt)} characters across {len(frames)} keyframes")
+    """Render the whole flipbook, extending the clip until every line is spoken."""
+    import warnings
 
-    video = sora().videos.create(
-        model=SORA_MODEL,
-        prompt=prompt,
-        seconds=SORA_SECONDS,
-        size=SORA_SIZE,
+    chunks = plan_chunks(frames)
+    spoken = sum(speaking_seconds(f["narration"]) for f in frames)
+    budget = sum(int(c["seconds"]) for c in chunks)
+    warn_once(
+        "sora",
+        f"{len(frames)} keyframes, ~{spoken:.0f}s of narration -> "
+        f"{len(chunks)} clip(s) totalling {budget}s "
+        f"(1 create + {len(chunks) - 1} extension(s))",
     )
 
-    while video.status in ("queued", "in_progress"):
-        if on_progress:
-            on_progress(video.status, video.progress or 0)
-        time.sleep(4)
-        video = sora().videos.retrieve(video.id)
+    with warnings.catch_warnings():   # the SDK flags the Sora endpoints as deprecated
+        warnings.simplefilter("ignore", DeprecationWarning)
 
-    if video.status != "completed":
-        detail = getattr(video.error, "message", None) or video.status
-        raise RuntimeError(f"Sora could not render this step: {detail}")
+        video, offset = None, 0
+        for n, chunk in enumerate(chunks):
+            tag = f"clip {n + 1}/{len(chunks)} "
+            if n == 0:
+                video = sora().videos.create(
+                    model=SORA_MODEL,
+                    prompt=build_sora_prompt(chunk["frames"], chunk["seconds"], len(frames), closing),
+                    seconds=chunk["seconds"],
+                    size=SORA_SIZE,
+                )
+            else:
+                video = sora().videos.extend(
+                    video={"id": video.id},
+                    prompt=build_extension_prompt(
+                        chunk["frames"], chunk["seconds"], offset, len(frames),
+                        closing, is_last=(n == len(chunks) - 1),
+                    ),
+                    seconds=chunk["seconds"],
+                )
+            video = _await_video(video, on_progress, tag)
+            offset += len(chunk["frames"])
 
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    sora().videos.download_content(video.id, variant="video").write_to_file(output_path)
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        sora().videos.download_content(video.id, variant="video").write_to_file(output_path)
 
-    # Narration is paced evenly across the clip, so the page can follow along in text.
-    seconds = float(video.seconds or SORA_SECONDS)
-    span = seconds / max(1, len(frames))
-    transcript = [
-        {"start": round(i * span, 2), "end": round((i + 1) * span, 2), "text": f["narration"]}
-        for i, f in enumerate(frames)
-    ]
-    return {"duration": round(seconds, 2), "transcript": transcript, "video_id": video.id}
+    # Trust the file over the plan: an extension chain may or may not hand back the
+    # whole take, and the page needs the real length either way.
+    duration = mp4_duration(output_path) or float(budget)
+    if duration + 1.0 < budget:
+        warn_once("sora-short", (
+            f"the downloaded clip is {duration:.1f}s but {budget}s was generated — this "
+            "build of the extensions endpoint returns only the final segment. The earlier "
+            "chunks are still on your OpenAI account by video id."
+        ))
+
+    # Narration is paced across the clip in proportion to how long each line takes.
+    transcript, cursor = [], 0.0
+    scale = duration / max(spoken, 0.001)
+    for frame in frames:
+        span = speaking_seconds(frame["narration"]) * scale
+        transcript.append({
+            "start": round(cursor, 2),
+            "end": round(min(cursor + span, duration), 2),
+            "text": frame["narration"],
+        })
+        cursor += span
+
+    return {"duration": round(duration, 2), "transcript": transcript, "video_id": video.id}
+
+
+def mp4_duration(path: str) -> float | None:
+    """Read an MP4's length out of its `mvhd` atom. Pure stdlib, no ffprobe."""
+    try:
+        blob = Path(path).read_bytes()
+        if b"ftyp" not in blob[:64]:      # every MP4 opens with an ftyp box
+            return None
+        marker = blob.find(b"mvhd")
+        if marker < 0:
+            return None
+        # Offsets from the 'mvhd' fourcc: version(1) flags(3), then created and
+        # modified — 4 bytes each in version 0, 8 each in version 1 — then timescale
+        # and duration.
+        version = blob[marker + 4]
+        if version == 1:
+            timescale = int.from_bytes(blob[marker + 24:marker + 28], "big")
+            units = int.from_bytes(blob[marker + 28:marker + 36], "big")
+        else:
+            timescale = int.from_bytes(blob[marker + 16:marker + 20], "big")
+            units = int.from_bytes(blob[marker + 20:marker + 24], "big")
+        if not timescale:
+            return None
+        seconds = units / timescale
+        return seconds if 0 < seconds < 3600 else None
+    except Exception:
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
