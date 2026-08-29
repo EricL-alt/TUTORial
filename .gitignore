@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 media/
 static/fonts/
+tutorial.db
+tutorial.db-wal
+tutorial.db-shm
+.flask-secret

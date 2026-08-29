@@ -1,9 +1,12 @@
-# TUTORial — Flask prototype
+# TUTORial — Flask prototype and the free curriculum behind it.
 #
 # No system dependencies. Video generation happens in Qwen (Alibaba Cloud Model
-# Studio), so there is no ffmpeg, no local rendering and no GPU.
+# Studio), so there is no ffmpeg, no local rendering and no GPU. Accounts,
+# progress and achievements live in tutorial.db through the standard library's
+# sqlite3, so there is nothing to install for the database either.
 
 Flask>=3.0
-anthropic>=1.0             # the lesson plan, the flipbook SVGs, the checkpoints
+anthropic>=1.0             # the lesson plan, the flipbook SVGs, the checkpoints,
+                           # and the marker behind every curriculum exercise
 dashscope>=1.24            # Qwen/Wan animates the flipbook into each video segment
 requests>=2.31             # downloads the finished clip, and the notebook fonts

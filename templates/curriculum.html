@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TUTORial · the free curriculum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Over+the+Rainbow&family=Sue+Ellen+Francisco&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='notebook.css') }}" rel="stylesheet">
+</head>
+<body>
+<div class="desk"><div class="wrap">
+
+  <div class="tabrail">
+    <a class="tab go" href="/" style="text-decoration:none;display:block">OUR MISSION</a>
+    <div class="tab on" data-tab="course">THE CURRICULUM<span class="sub" id="rail-progress"></span></div>
+    <a class="tab go" href="/achievements" style="text-decoration:none;display:block">ACHIEVEMENTS
+      <span class="sub" id="rail-badges"></span></a>
+    <a class="tab go" href="/" style="text-decoration:none;display:block">THE EXAMPLE</a>
+  </div>
+
+  <div class="page">
+    <div class="rules"></div><div class="mgn-a"></div><div class="mgn-b"></div><div class="mgn-r"></div>
+    <div class="hole" style="top:120px"></div><div class="hole" style="top:400px"></div><div class="hole" style="top:680px"></div>
+
+    <div class="inner">
+
+      <div class="mast">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div class="badge-t"><span class="lil" style="font-size:27px;color:#fffdf7">T</span></div>
+          <div>
+            <a href="/" style="text-decoration:none;color:inherit">
+              <div class="lil" style="font-size:38px;line-height:.98;letter-spacing:.01em">TUTOR<span style="color:#e79ec0">ial</span></div></a>
+            <div class="cav muted" style="font-size:20px;margin-top:1px">a free course in using AI properly</div>
+          </div>
+        </div>
+        <div class="whoami">
+          <span class="dot"></span>
+          <span class="hand" style="font-size:18px;color:#5a6382">{{ me.display_name }}</span>
+          <a class="cav" href="/logout" style="font-size:18px;color:#a3abc2;text-decoration:none;border-bottom:2px solid #e2ecf5">log out</a>
+        </div>
+      </div>
+      <div class="rule-sky"></div><div class="rule-blush"></div>
+
+      {% if key_missing %}
+      <div class="warnbar"><strong class="lil" style="color:#c2557f">NO CLAUDE API KEY YET.</strong>
+        The exercises still run and still mark you, but a local rubric does the marking instead of a
+        model. Set <code>ANTHROPIC_API_KEY</code> in <code>app.py</code> to have Claude read your work.</div>
+      {% endif %}
+
+      <!-- ══════════════════ CONTENTS ══════════════════ -->
+      <div id="screen-contents" style="animation:nb-pop .4s ease both">
+
+        <h1 class="lil" style="font-size:44px;line-height:1.06;margin:0 0 8px">THE FREE CURRICULUM</h1>
+        <p class="hand" style="font-size:21px;line-height:33px;color:#5a6382;margin:8px 0 22px;max-width:800px">
+          Eight units on using artificial intelligence properly, honestly and in a way that leaves you
+          more capable. Every unit is our paraphrase of the Student Guide to Artificial Intelligence.
+          Every exercise is marked by Claude, part by part, so you find out where your thinking is thin
+          rather than being told well done.</p>
+
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+          <div style="flex:1 1 300px;min-width:240px">
+            <div class="ribbonbar"><div id="bar-units" style="width:0%"></div></div>
+          </div>
+          <div class="lil" style="font-size:18px"><span class="hl" id="count-units" style="padding:0 5px"></span></div>
+          <div class="lil" style="font-size:18px"><span class="hl" id="count-ex" style="padding:0 5px"></span></div>
+        </div>
+        <div class="cav muted" style="font-size:20px;margin-bottom:30px">
+          Progress is kept in our database against your account, so you can stop in the middle of a unit
+          and it will be here.</div>
+
+        <div id="unitlist"></div>
+
+        <div class="note torn" style="background:#f6fbfe;border:4px solid #a8d8f0;padding:20px 24px;transform:rotate(.35deg);
+             box-shadow:5px 6px 0 #dcf0fb;margin-top:30px">
+          <div class="lil" style="font-size:20px;color:#4a7891;margin-bottom:7px">A REMINDER ABOUT TUTORIAL ITSELF</div>
+          <div class="hand" style="font-size:19px;line-height:30px;color:#5a6382">
+            The video tutor on our front page is not the best thing anyone has ever done with AI, and we
+            have never said it was. It is one example, built to satisfy the four properties this course
+            teaches. Judge it by them, and judge everything else the same way.</div>
+        </div>
+
+        <div class="sourceline" style="margin-top:24px">Every unit paraphrases {{ source_line }}. The full entry is on the works cited page.</div>
+      </div>
+
+      <!-- ══════════════════ ONE UNIT ══════════════════ -->
+      <div id="screen-unit" class="hidden" style="animation:nb-pop .35s ease both">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px">
+          <button class="btn-quiet" id="btn-back">← all units</button>
+          <div class="lil" style="font-size:17px"><span class="hl" id="unit-tag" style="padding:0 5px"></span></div>
+        </div>
+        <div id="unit-body"></div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:44px;padding-top:16px">
+        <div class="cav" id="footnote" style="font-size:19px;color:#c3cbd9">TUTORial · the free curriculum</div>
+        <div style="display:inline-block;background:#ffe08a;padding:4px 18px;border-radius:3px;transform:rotate(-1.4deg)">
+          <span class="lil" id="pagenum" style="font-size:21px">3</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div></div>
+
+<div class="toastwrap" id="toasts"></div>
+
+<script>
+"use strict";
+const UNITS = {{ units|tojson }};
+const BADGES = {{ badges|tojson }};
+let STATE = {{ state|tojson }};
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs, html) => {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const done = (key) => Object.prototype.hasOwnProperty.call(STATE.progress || {}, key);
+const KIND_LABEL = {
+  fields: "BUILD IT PART BY PART", single: "WRITE ONE PASSAGE", checks: "TICK WHAT HOLDS",
+  hunt: "CLICK THE RISKY LINES", sorter: "SORT THEM", match: "PAIR THEM UP", order: "PUT IT IN ORDER",
+};
+const MARKED_BY = {
+  fields: "Claude marks each box on its own", single: "Claude reports which parts it can find",
+  checks: "Claude marks every tick you made", hunt: "Claude marks every line you flagged",
+  sorter: "Claude marks every call you made", match: "marked here, with no model involved",
+  order: "marked here, with no model involved",
+};
+
+let openUnitId = null;
+
+// ── talking to the server ──────────────────────────────────────────────────
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({ error: "The server sent something we could not read." }));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function absorb(data) {
+  if (data.state) STATE = data.state;
+  if (data.unlocked && data.unlocked.length) data.unlocked.forEach(toast);
+  paintProgress();
+}
+
+function toast(badge) {
+  const node = el("div", { class: "toast" });
+  node.innerHTML =
+    `<div class="seal">${esc(badge.mark)}</div>` +
+    `<div><div class="lil" style="font-size:17px;color:#96793a">ACHIEVEMENT UNLOCKED</div>` +
+    `<div class="lil" style="font-size:20px;line-height:1.15">${esc(badge.title)}</div>` +
+    `<div class="hand" style="font-size:17px;line-height:24px;color:#7a6a3a">${esc(badge.note)}</div></div>`;
+  $("toasts").appendChild(node);
+  setTimeout(() => {
+    node.style.transition = "opacity .5s ease, transform .5s ease";
+    node.style.opacity = "0"; node.style.transform = "translateY(12px)";
+    setTimeout(() => node.remove(), 550);
+  }, 6200);
+}
+
+function paintProgress() {
+  const u = STATE.units_done, ut = STATE.unit_total;
+  const e = STATE.exercises_done, et = STATE.exercise_total;
+  $("bar-units").style.width = Math.round(((u + e) / (ut + et)) * 100) + "%";
+  $("count-units").textContent = `${u} of ${ut} UNITS`;
+  $("count-ex").textContent = `${e} of ${et} EXERCISES`;
+  $("rail-progress").textContent = `${u} of ${ut} units done`;
+  $("rail-badges").textContent = `${Object.keys(STATE.earned || {}).length} of ${STATE.badge_total} earned`;
+  if (openUnitId === null) paintContents();
+}
+
+// ── the contents page ──────────────────────────────────────────────────────
+function paintContents() {
+  const host = $("unitlist");
+  host.innerHTML = "";
+  UNITS.forEach((unit) => {
+    const read = done(unit.id);
+    const exDone = unit.exercises.filter((x) => done("ex." + x.id)).length;
+    const card = el("div", {
+      class: "unitcard" + (read ? " done" : ""),
+      style: `--c:${unit.color};--s:${unit.tint}`,
+    });
+    card.innerHTML =
+      `<div class="unitnum">${read ? "✓" : unit.number}</div>` +
+      `<div style="flex:1;min-width:0">` +
+        `<div class="lil" style="font-size:23px;line-height:1.14;margin-bottom:4px">${esc(unit.title)}</div>` +
+        `<div class="hand" style="font-size:19px;line-height:28px;color:#5a6382;margin-bottom:9px">${esc(unit.blurb)}</div>` +
+        `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">` +
+          `<span class="pill" style="--c:${unit.color}">${unit.minutes} MINUTES</span>` +
+          `<span class="pill ${exDone === unit.exercises.length ? "filled" : ""}" style="--c:${unit.dark}">` +
+            `${exDone} OF ${unit.exercises.length} EXERCISES</span>` +
+          (read ? `<span class="pill filled" style="--c:#5cc4a0">READ</span>` : "") +
+        `</div>` +
+      `</div>` +
+      `<div class="lil" style="font-size:26px;color:${unit.color};align-self:center">→</div>`;
+    card.addEventListener("click", () => openUnit(unit.id));
+    host.appendChild(card);
+  });
+}
+
+// ── one unit ───────────────────────────────────────────────────────────────
+$("btn-back").addEventListener("click", closeUnit);
+
+function closeUnit() {
+  openUnitId = null;
+  $("screen-contents").classList.remove("hidden");
+  $("screen-unit").classList.add("hidden");
+  $("footnote").textContent = "TUTORial · the free curriculum";
+  paintContents();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function openUnit(id) {
+  const unit = UNITS.find((u) => u.id === id);
+  if (!unit) return;
+  openUnitId = id;
+  $("screen-contents").classList.add("hidden");
+  $("screen-unit").classList.remove("hidden");
+  $("unit-tag").textContent = `UNIT ${unit.number} OF ${UNITS.length}`;
+  $("footnote").textContent = "TUTORial · unit " + unit.number;
+  $("pagenum").textContent = String(3 + unit.number);
+
+  const body = $("unit-body");
+  body.innerHTML = "";
+
+  const head = el("div", { style: "margin-bottom:24px" });
+  head.innerHTML =
+    `<div style="display:flex;gap:17px;align-items:flex-start;margin-bottom:12px">` +
+      `<div class="unitnum" style="--c:${unit.color};--s:${unit.tint};background:${unit.color};box-shadow:2px 3px 0 ${unit.tint}">${unit.number}</div>` +
+      `<h1 class="lil" style="font-size:38px;line-height:1.08;margin:4px 0 0">${esc(unit.title)}</h1></div>` +
+    `<p class="hand" style="font-size:21px;line-height:33px;color:#5a6382;margin:0;max-width:820px">${esc(unit.blurb)}</p>`;
+  body.appendChild(head);
+
+  unit.cards.forEach((card) => {
+    const node = el("div", { class: "readcard", style: `--c:${unit.color};--t:${unit.tint}` });
+    let html = `<h4>${esc(card.heading)}</h4>` +
+      `<p class="hand" style="font-size:20px;line-height:32px;color:#5a6382;margin:0">${esc(card.body)}</p>`;
+    (card.bullets || []).forEach((b) => {
+      html += `<div class="readbullet"><span class="d" style="--c:${unit.color}"></span>` +
+              `<span class="hand" style="font-size:19px;line-height:30px;color:#5a6382">${esc(b)}</span></div>`;
+    });
+    node.innerHTML = html;
+    body.appendChild(node);
+  });
+
+  const so = el("div", { class: "note torn", style:
+    `background:${unit.tint};border:4px solid ${unit.color};padding:18px 22px;transform:rotate(-.3deg);margin:22px 0 8px` });
+  so.innerHTML = `<div class="cav" style="font-size:21px;font-weight:700;color:${unit.dark};margin-bottom:4px">so →</div>` +
+    `<div class="hand" style="font-size:20px;line-height:31px;color:${unit.dark}">${esc(unit.so)}</div>`;
+  body.appendChild(so);
+
+  body.appendChild(el("div", { class: "sourceline" }, esc(unit.source) + " · " + esc("Student Guide to Artificial Intelligence, AI U 2025, Elon Edition")));
+
+  unit.exercises.forEach((spec) => body.appendChild(buildExercise(spec)));
+
+  // Finishing the reading is its own act, and its own achievement.
+  const finish = el("div", { style: "margin-top:30px" });
+  const already = done(unit.id);
+  finish.innerHTML =
+    `<div class="stamp" style="transform:rotate(-.7deg);margin-bottom:14px">${already ? "UNIT FINISHED" : "WHEN YOU HAVE READ IT"}</div>`;
+  const button = el("button", {
+    class: "btn " + (already ? "btn-ghost" : "btn-mint"),
+    style: "width:100%;font-size:21px;letter-spacing:.03em;padding:17px;border-radius:15px;transform:rotate(-.35deg)",
+  }, already ? "✓ MARKED AS READ" : "MARK THIS UNIT AS READ");
+  button.disabled = already;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "SAVING";
+    try {
+      absorb(await post("/api/progress", { key: unit.id }));
+      button.textContent = "✓ MARKED AS READ";
+      button.className = "btn btn-ghost";
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = "THAT DID NOT SAVE. TRY AGAIN.";
+    }
+  });
+  finish.appendChild(button);
+
+  const nextUnit = UNITS[UNITS.indexOf(unit) + 1];
+  const nav = el("div", { style: "display:flex;gap:11px;margin-top:14px;flex-wrap:wrap" });
+  const backBtn = el("button", { class: "btn btn-sky", style: "flex:1;font-size:17px;padding:14px 10px" }, "← ALL UNITS");
+  backBtn.addEventListener("click", closeUnit);
+  nav.appendChild(backBtn);
+  if (nextUnit) {
+    const nextBtn = el("button", { class: "btn btn-lilac", style: "flex:1;font-size:17px;padding:14px 10px" },
+                       "NEXT UNIT →");
+    nextBtn.addEventListener("click", () => { openUnit(nextUnit.id); });
+    nav.appendChild(nextBtn);
+  } else {
+    const badgeBtn = el("a", { class: "btn btn-lilac", href: "/achievements",
+      style: "flex:1;font-size:17px;padding:14px 10px;text-align:center;text-decoration:none" }, "SEE YOUR ACHIEVEMENTS →");
+    nav.appendChild(badgeBtn);
+  }
+  finish.appendChild(nav);
+  body.appendChild(finish);
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE EXERCISES
+//
+// Each kind builds its own controls and its own payload, and each one hands the
+// same shaped result back to paintVerdicts. Green is approved. Red is not.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function buildExercise(spec) {
+  const unit = UNITS.find((u) => u.id === spec.unit);
+  const color = unit.color, tint = unit.tint;
+  const box = el("div", { class: "exbox", style: `--c:${color};--s:${tint}` });
+  box.dataset.exercise = spec.id;
+
+  box.innerHTML =
+    `<div class="exkind" style="--c:${color}">${KIND_LABEL[spec.kind] || "EXERCISE"}</div>` +
+    `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">` +
+      `<div class="lil" style="font-size:27px;line-height:1.1">${esc(spec.title)}</div>` +
+      (done("ex." + spec.id) ? `<span class="pill filled" style="--c:#5cc4a0">CLEARED</span>` : "") +
+    `</div>` +
+    `<div class="cav" style="font-size:20px;color:${unit.dark};margin-bottom:12px">${esc(spec.tagline)}</div>` +
+    `<p class="hand" style="font-size:20px;line-height:31px;color:#5a6382;margin:0 0 18px">${esc(spec.intro)}</p>`;
+
+  if (spec.sample) {
+    box.appendChild(el("div", { class: "lil", style: "font-size:15px;letter-spacing:.05em;color:#8b93ad;margin-bottom:6px" },
+                       esc(spec.sample_label || "THE MATERIAL")));
+    box.appendChild(el("div", { class: "sample" }, esc(spec.sample)));
+  }
+
+  const controls = el("div");
+  box.appendChild(controls);
+  const builder = BUILDERS[spec.kind];
+  const collect = builder(spec, controls, color, unit);
+
+  const summary = el("div", { class: "hidden", style: "margin-top:16px" });
+  const runButton = el("button", {
+    class: "btn btn-lilac",
+    style: "width:100%;font-size:22px;letter-spacing:.05em;padding:17px;border-radius:15px;border-width:4px;" +
+           "box-shadow:4px 5px 0 #a98fd4;transform:rotate(-.35deg);margin-top:18px;display:flex;" +
+           "align-items:center;justify-content:center;gap:11px",
+  }, "EXECUTE <span style=\"font-size:17px\">▶</span>");
+
+  runButton.addEventListener("click", async () => {
+    runButton.disabled = true;
+    runButton.innerHTML = "MARKING YOUR WORK";
+    summary.classList.add("hidden");
+    try {
+      const data = await post("/api/exercise", { exercise: spec.id, payload: collect() });
+      paintVerdicts(box, spec, data);
+      summary.classList.remove("hidden");
+      summary.innerHTML = summaryHtml(spec, data);
+      absorb(data);
+      if (data.passed) {
+        const flag = box.querySelector(".pill.filled");
+        if (!flag) box.querySelector("div > .lil").parentNode
+          .appendChild(el("span", { class: "pill filled", style: "--c:#5cc4a0" }, "CLEARED"));
+      }
+    } catch (err) {
+      summary.classList.remove("hidden");
+      summary.innerHTML =
+        `<div class="note torn-sm" style="background:#fdeef4;border:3.5px solid #f4b8cd;padding:14px 17px">` +
+        `<div class="lil" style="font-size:18px;color:#c2557f;margin-bottom:4px">THE MARKER DID NOT RUN</div>` +
+        `<div class="hand" style="font-size:18px;line-height:27px;color:#96637c">${esc(err.message || err)}</div></div>`;
+    } finally {
+      runButton.disabled = false;
+      runButton.innerHTML = "EXECUTE AGAIN <span style=\"font-size:17px\">▶</span>";
+    }
+  });
+
+  box.appendChild(runButton);
+  box.appendChild(el("div", { class: "cav", style: "font-size:18px;color:#a3abc2;text-align:center;margin-top:8px" },
+                     esc(MARKED_BY[spec.kind] || "")));
+  box.appendChild(summary);
+  return box;
+}
+
+function summaryHtml(spec, data) {
+  const good = data.passed;
+  const engine = data.engine === "claude" ? "Claude read your work."
+    : data.engine === "rules" ? "Marked here, with no model involved."
+    : "Marked by the local rubric, because no Claude API key is configured.";
+  return `<div class="note torn-sm" style="background:${good ? "#e6f7f0" : "#fffaeb"};` +
+    `border:3.5px solid ${good ? "#86ddc0" : "#f0c85e"};padding:15px 18px;transform:rotate(${good ? ".4" : "-.4"}deg)">` +
+    `<div class="lil" style="font-size:19px;color:${good ? "#3d8f72" : "#96793a"};margin-bottom:4px">` +
+      `${good ? "✓ CLEARED" : "NOT YET"} · ${data.score} OF ${data.outof} APPROVED` +
+      (data.pass_mark ? ` · ${data.pass_mark} NEEDED` : "") + `</div>` +
+    `<div class="hand" style="font-size:19px;line-height:29px;color:${good ? "#4a7a67" : "#7a6a3a"}">${esc(data.summary)}</div>` +
+    (good && spec.reward ? `<div class="cav" style="font-size:20px;color:${good ? "#3d8f72" : "#96793a"};margin-top:8px">${esc(spec.reward)}</div>` : "") +
+    `<div class="cav" style="font-size:18px;color:#a3abc2;margin-top:7px">${esc(engine)}</div></div>`;
+}
+
+/** Every kind stores its nodes on box, keyed by verdict key, so painting is uniform. */
+function paintVerdicts(box, spec, data) {
+  (data.verdicts || []).forEach((v) => {
+    const target = box.querySelector(`[data-vkey="${v.key}"]`);
+    if (!target) return;
+    target.classList.remove("ok", "no", "skip", "on");
+    target.classList.add(v.state || (v.ok ? "ok" : "no"));
+    const slot = box.querySelector(`[data-vnote="${v.key}"]`);
+    if (slot) {
+      slot.className = "verdict " + (v.state || (v.ok ? "ok" : "no"));
+      slot.innerHTML = `<span class="mk">${v.state === "skip" ? "○" : v.ok ? "✓" : "✕"}</span>` +
+                       `<span class="tx">${esc(v.note)}</span>`;
+      slot.classList.remove("hidden");
+    }
+    const inline = box.querySelector(`[data-vwhy="${v.key}"]`);
+    if (inline) inline.textContent = (v.ok ? "✓ " : "✕ ") + v.note;
+  });
+}
+
+// ── KIND. FIELDS ───────────────────────────────────────────────────────────
+function buildFields(spec, host, color) {
+  const inputs = {};
+  spec.fields.forEach((field) => {
+    const wrap = el("div", { class: "exfield", style: `--c:${field.color || color}` });
+    wrap.dataset.vkey = field.key;
+    const area = el("textarea", { rows: "3", placeholder: field.placeholder || "" });
+    inputs[field.key] = area;
+    const flag = el("div", { class: "flagline" });
+    flag.innerHTML = `<span class="tagname" style="--c:${field.color || color}">${esc(field.label)}</span>` +
+      (field.optional ? `<span class="cav" style="font-size:18px;color:#a3abc2">optional</span>` : "");
+    wrap.appendChild(flag);
+    if (field.hint) wrap.appendChild(el("div", { class: "cav", style: "font-size:18px;color:#a3abc2;margin-bottom:6px" }, esc(field.hint)));
+    wrap.appendChild(area);
+    const note = el("div", { class: "verdict hidden" });
+    note.dataset.vnote = field.key;
+    wrap.appendChild(note);
+    host.appendChild(wrap);
+  });
+  return () => {
+    const values = {};
+    for (const key in inputs) values[key] = inputs[key].value;
+    return { values };
+  };
+}
+
+// ── KIND. SINGLE ───────────────────────────────────────────────────────────
+function buildSingle(spec, host, color) {
+  const wrap = el("div", { class: "exfield", style: `--c:${color}` });
+  const flag = el("div", { class: "flagline" });
+  flag.innerHTML = `<span class="tagname" style="--c:${color}">${esc(spec.field.label)}</span>`;
+  const area = el("textarea", { rows: String(spec.field.rows || 6), placeholder: spec.field.placeholder || "" });
+  wrap.appendChild(flag);
+  wrap.appendChild(area);
+  host.appendChild(wrap);
+
+  host.appendChild(el("div", { class: "lil", style: "font-size:15px;letter-spacing:.05em;color:#8b93ad;margin:16px 0 8px" },
+                     "WHAT THE MARKER LOOKED FOR"));
+  spec.components.forEach((component) => {
+    const row = el("div", { class: "exfield", style: `--c:${component.color || color};padding:11px 14px;margin-bottom:9px` });
+    row.dataset.vkey = component.key;
+    const line = el("div", { class: "flagline" });
+    line.innerHTML = `<span class="tagname" style="--c:${component.color || color}">${esc(component.label)}</span>` +
+      (component.optional ? `<span class="cav" style="font-size:18px;color:#a3abc2">optional</span>` : "");
+    row.appendChild(line);
+    const note = el("div", { class: "verdict hidden" });
+    note.dataset.vnote = component.key;
+    row.appendChild(note);
+    host.appendChild(row);
+  });
+
+  return () => ({ text: area.value });
+}
+
+// ── KIND. CHECKS ───────────────────────────────────────────────────────────
+function buildChecks(spec, host, color) {
+  const picked = new Set();
+  (spec.groups || []).forEach((group, gi) => {
+    host.appendChild(el("div", {
+      class: "lil",
+      style: `font-size:15px;letter-spacing:.05em;color:${group.color};margin:${gi ? "18px" : "4px"} 0 8px`,
+    }, esc(group.label)));
+    spec.items.filter((item) => item.group === gi).forEach((item) => {
+      const row = el("button", { class: "tick" });
+      row.dataset.vkey = item.key;
+      row.innerHTML = `<span class="bx">✓</span><span style="flex:1">${esc(item.text)}` +
+                      `<span class="why" data-vwhy="${item.key}"></span></span>`;
+      row.addEventListener("click", () => {
+        if (picked.has(item.key)) { picked.delete(item.key); row.classList.remove("on"); }
+        else { picked.add(item.key); row.classList.add("on"); }
+      });
+      host.appendChild(row);
+    });
+  });
+
+  const wrap = el("div", { class: "exfield", style: `--c:${color};margin-top:16px` });
+  wrap.dataset.vkey = "note";
+  const flag = el("div", { class: "flagline" });
+  flag.innerHTML = `<span class="tagname" style="--c:${color}">${esc(spec.note_label)}</span>`;
+  const area = el("textarea", { rows: "3", placeholder: spec.note_placeholder || "" });
+  wrap.appendChild(flag);
+  wrap.appendChild(area);
+  const note = el("div", { class: "verdict hidden" });
+  note.dataset.vnote = "note";
+  wrap.appendChild(note);
+  host.appendChild(wrap);
+
+  return () => ({ ticked: Array.from(picked), note: area.value });
+}
+
+// ── KIND. HUNT ─────────────────────────────────────────────────────────────
+function buildHunt(spec, host, color) {
+  const picked = new Set();
+  host.appendChild(el("div", { class: "lil", style: "font-size:15px;letter-spacing:.05em;color:#8b93ad;margin-bottom:8px" },
+                     esc(spec.sample_label || "THE PASSAGE")));
+  const passage = el("div", { class: "hunts" });
+  spec.sentences.forEach((sentence) => {
+    const span = el("span", { class: "sen" }, esc(sentence.text) + " ");
+    span.dataset.vkey = sentence.key;
+    span.addEventListener("click", () => {
+      if (picked.has(sentence.key)) { picked.delete(sentence.key); span.classList.remove("on"); }
+      else { picked.add(sentence.key); span.classList.add("on"); }
+    });
+    passage.appendChild(span);
+  });
+  host.appendChild(passage);
+  host.appendChild(el("div", { class: "cav", style: "font-size:19px;color:#a3abc2;margin:8px 0 14px" },
+                     "Click a sentence to flag it. Click it again to let it go."));
+
+  const notes = el("div", { style: "margin-bottom:6px" });
+  spec.sentences.forEach((sentence) => {
+    const slot = el("div", { class: "verdict hidden" });
+    slot.dataset.vnote = sentence.key;
+    notes.appendChild(slot);
+  });
+  host.appendChild(notes);
+
+  const wrap = el("div", { class: "exfield", style: `--c:${color};margin-top:12px` });
+  wrap.dataset.vkey = "note";
+  const flag = el("div", { class: "flagline" });
+  flag.innerHTML = `<span class="tagname" style="--c:${color}">${esc(spec.note_label)}</span>`;
+  const area = el("textarea", { rows: "3", placeholder: spec.note_placeholder || "" });
+  wrap.appendChild(flag);
+  wrap.appendChild(area);
+  const note = el("div", { class: "verdict hidden" });
+  note.dataset.vnote = "note";
+  wrap.appendChild(note);
+  host.appendChild(wrap);
+
+  return () => ({ picked: Array.from(picked), note: area.value });
+}
+
+// ── KIND. SORTER ───────────────────────────────────────────────────────────
+function buildSorter(spec, host) {
+  const placement = {};
+  spec.items.forEach((item) => {
+    const card = el("div", { class: "exfield", style: "--c:#cfe3f2;padding:13px 15px" });
+    card.dataset.vkey = item.key;
+    card.appendChild(el("div", { class: "hand", style: "font-size:19px;line-height:29px;color:#3d4663" }, esc(item.text)));
+    const row = el("div", { class: "bucketrow" });
+    spec.buckets.forEach((bucket) => {
+      const button = el("button", { class: "bucketbtn", style: `--c:${bucket.color};--t:${bucket.tint}` }, esc(bucket.label));
+      button.addEventListener("click", () => {
+        placement[item.key] = bucket.key;
+        row.querySelectorAll(".bucketbtn").forEach((b) => b.classList.remove("on"));
+        button.classList.add("on");
+      });
+      row.appendChild(button);
+    });
+    card.appendChild(row);
+    const note = el("div", { class: "verdict hidden" });
+    note.dataset.vnote = item.key;
+    card.appendChild(note);
+    host.appendChild(card);
+  });
+  return () => ({ placement });
+}
+
+// ── KIND. MATCH ────────────────────────────────────────────────────────────
+function buildMatch(spec, host) {
+  const chosen = {};
+  spec.items.forEach((item) => {
+    const row = el("div", { class: "matchrow" });
+    row.dataset.vkey = item.key;
+    row.appendChild(el("div", { class: "hand", style: "flex:1 1 260px;font-size:19px;line-height:28px;color:#3d4663" },
+                       esc(item.text)));
+    const select = el("select");
+    select.appendChild(el("option", { value: "" }, "pick a family"));
+    spec.options.forEach((option, i) => select.appendChild(el("option", { value: String(i) }, esc(option))));
+    select.addEventListener("change", () => { chosen[item.key] = select.value === "" ? null : Number(select.value); });
+    row.appendChild(select);
+    const note = el("div", { class: "verdict hidden", style: "flex-basis:100%" });
+    note.dataset.vnote = item.key;
+    row.appendChild(note);
+    host.appendChild(row);
+  });
+  return () => ({ chosen });
+}
+
+// ── KIND. ORDER ────────────────────────────────────────────────────────────
+function buildOrder(spec, host) {
+  // Shuffle once so the learner is actually rebuilding the sequence.
+  let order = spec.steps.map((s) => s.key);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const byKey = {};
+  spec.steps.forEach((s) => { byKey[s.key] = s; });
+  const list = el("div");
+  host.appendChild(list);
+
+  function draw() {
+    list.innerHTML = "";
+    order.forEach((key, index) => {
+      const step = byKey[key];
+      const row = el("div", { class: "orderrow" });
+      row.dataset.vkey = key;
+      const movers = el("div", { style: "display:flex;flex-direction:column;gap:4px;flex-shrink:0" });
+      const up = el("button", { class: "mover" }, "▲");
+      const down = el("button", { class: "mover" }, "▼");
+      up.disabled = index === 0;
+      down.disabled = index === order.length - 1;
+      up.addEventListener("click", () => { [order[index - 1], order[index]] = [order[index], order[index - 1]]; draw(); });
+      down.addEventListener("click", () => { [order[index + 1], order[index]] = [order[index], order[index + 1]]; draw(); });
+      movers.append(up, down);
+
+      row.appendChild(el("div", { class: "slot" }, String(index + 1)));
+      const text = el("div", { style: "flex:1;min-width:0" });
+      text.innerHTML = `<div style="margin-bottom:3px"><span class="who">${esc(step.who)}</span></div>` +
+        `<div class="hand" style="font-size:19px;line-height:28px;color:#3d4663">${esc(step.text)}</div>`;
+      const note = el("div", { class: "verdict hidden" });
+      note.dataset.vnote = key;
+      text.appendChild(note);
+      row.appendChild(text);
+      row.appendChild(movers);
+      list.appendChild(row);
+    });
+  }
+  draw();
+  return () => ({ order });
+}
+
+const BUILDERS = {
+  fields: buildFields, single: buildSingle, checks: buildChecks,
+  hunt: buildHunt, sorter: buildSorter, match: buildMatch, order: buildOrder,
+};
+
+paintProgress();
+paintContents();
+</script>
+</body>
+</html>

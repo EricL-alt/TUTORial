@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TUTORial · join the free curriculum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Over+the+Rainbow&family=Sue+Ellen+Francisco&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='notebook.css') }}" rel="stylesheet">
+</head>
+<body>
+<div class="desk"><div class="wrap">
+
+  <div class="tabrail">
+    <a class="tab go" href="/" style="text-decoration:none;display:block">OUR MISSION</a>
+    <div class="tab on" data-tab="course">THE CURRICULUM<span class="sub">sign in to open</span></div>
+    <a class="tab go" href="/#" style="text-decoration:none;display:block">THE EXAMPLE</a>
+  </div>
+
+  <div class="page">
+    <div class="rules"></div><div class="mgn-a"></div><div class="mgn-b"></div><div class="mgn-r"></div>
+    <div class="hole" style="top:120px"></div><div class="hole" style="top:400px"></div><div class="hole" style="top:680px"></div>
+
+    <div class="inner">
+
+      <div class="mast">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div class="badge-t"><span class="lil" style="font-size:27px;color:#fffdf7">T</span></div>
+          <div>
+            <a href="/" style="text-decoration:none;color:inherit">
+              <div class="lil" style="font-size:38px;line-height:.98;letter-spacing:.01em">TUTOR<span style="color:#e79ec0">ial</span></div></a>
+            <div class="cav muted" style="font-size:20px;margin-top:1px">teaching students to use AI properly</div>
+          </div>
+        </div>
+        <div class="cav" style="font-size:19px;color:#a3abc2;transform:rotate(-1deg);text-align:right;line-height:1.25">
+          Name, yours · Date, today<br><span style="color:#c3b2e0">the front of the notebook</span>
+        </div>
+      </div>
+      <div class="rule-sky"></div><div class="rule-blush"></div>
+
+      <div style="display:flex;gap:38px;align-items:flex-start;flex-wrap:wrap">
+
+        <!-- ── the gate itself ── -->
+        <div style="flex:1 1 380px;min-width:min(100%,340px);max-width:470px">
+          <h1 class="lil" style="font-size:40px;line-height:1.08;margin:0 0 8px">PUT YOUR NAME<br>IN THE FRONT.</h1>
+          <p class="hand" style="font-size:20px;line-height:31px;color:#5a6382;margin:0 0 24px">
+            The curriculum is free and always will be. We ask for an account only so your finished
+            units and your unlocked achievements have somewhere to live between visits.</p>
+
+          <div class="switcher">
+            <button id="tab-signup" class="{{ 'on' if mode == 'signup' else '' }}">SIGN UP</button>
+            <button id="tab-login" class="{{ 'on' if mode == 'login' else '' }}">LOG IN</button>
+          </div>
+
+          <div class="flagbox" style="--c:#c9b6e4;transform:rotate(-.35deg);padding:32px 22px 22px">
+            <div class="flag"><span id="form-flag">NEW HERE</span><i></i></div>
+
+            <div class="gatefield" id="wrap-name">
+              <label for="in-name">WHAT SHOULD WE CALL YOU</label>
+              <input class="gateinput" type="text" id="in-name" autocomplete="nickname" placeholder="optional">
+            </div>
+
+            <div class="gatefield">
+              <label for="in-email">YOUR EMAIL</label>
+              <input class="gateinput" type="email" id="in-email" autocomplete="email" placeholder="you@school.edu">
+            </div>
+
+            <div class="gatefield">
+              <label for="in-pass">YOUR PASSWORD</label>
+              <input class="gateinput" type="password" id="in-pass" autocomplete="current-password" placeholder="at least eight characters">
+              <div class="cav" id="pass-hint" style="font-size:18px;color:#a3abc2;margin-top:6px">
+                Stored in our database only as a salted digest, never as text anyone could read.</div>
+            </div>
+
+            <div id="gate-error" class="hidden" style="background:#fdeef4;border:3px solid #f4b8cd;border-radius:11px;
+                 padding:11px 14px;margin-bottom:14px">
+              <span class="hand" id="gate-error-text" style="font-size:19px;line-height:28px;color:#96637c"></span>
+            </div>
+
+            <button class="btn btn-lilac" id="btn-go" style="width:100%;font-size:21px;letter-spacing:.04em;padding:16px;
+                    border-radius:14px;border-width:4px;box-shadow:4px 5px 0 #a98fd4;transform:rotate(-.4deg)">
+              CREATE MY ACCOUNT</button>
+
+            <div class="cav" style="font-size:18px;color:#a3abc2;margin-top:12px;text-align:center">
+              We never send you anything. There is nothing to unsubscribe from.</div>
+          </div>
+        </div>
+
+        <!-- ── what is behind the gate ── -->
+        <div style="flex:1 1 380px;min-width:min(100%,320px)">
+          <div class="stamp" style="transform:rotate(-.8deg);margin-bottom:18px">WHAT IS INSIDE</div>
+
+          <div class="note torn" style="background:#fffaeb;border:3.5px solid #f0c85e;transform:rotate(.5deg);
+               box-shadow:5px 6px 0 rgba(240,200,94,.38);margin-bottom:18px">
+            <div class="lil" style="font-size:21px;color:#96793a;margin-bottom:7px">{{ unit_count }} UNITS, FREE</div>
+            <div class="hand" style="font-size:19px;line-height:29px;color:#7a6a3a">
+              Where AI already lives, what it means for your education, the anatomy of a prompt, reading
+              output like an editor, AI across your work, integrity and attribution, the ethics you
+              inherit, and a two part career plan.</div>
+          </div>
+
+          <div class="note torn" style="background:#e6f7f0;border:3.5px solid #86ddc0;transform:rotate(-.6deg);
+               box-shadow:5px 6px 0 rgba(134,221,192,.38);margin-bottom:18px">
+            <div class="lil" style="font-size:21px;color:#3d8f72;margin-bottom:7px">{{ exercise_count }} EXERCISES CLAUDE MARKS</div>
+            <div class="hand" style="font-size:19px;line-height:29px;color:#4a7a67">
+              Build a prompt out of its six parts and watch each part come back green or red. Run four
+              checks over a passage a model wrote. Hunt the sentences that need verifying. Sort the red
+              line cases. Write an attribution that actually holds up.</div>
+          </div>
+
+          <div class="note torn" style="background:#f6f1ff;border:3.5px solid #b9a3e3;transform:rotate(.4deg);
+               box-shadow:5px 6px 0 rgba(185,163,227,.38)">
+            <div class="lil" style="font-size:21px;color:#7d6ea8;margin-bottom:7px">{{ badge_count }} ACHIEVEMENTS</div>
+            <div class="hand" style="font-size:19px;line-height:29px;color:#5a5170">
+              One per unit, one for each of the exercises worth being proud of, and three you can only
+              earn by finishing. They are kept in the same database as your account, so they follow you.</div>
+          </div>
+
+          <div class="cav" style="font-size:20px;color:#a3abc2;margin-top:20px;line-height:29px">
+            Already have an account? Press LOG IN above and pick up wherever you stopped.</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:44px;padding-top:16px">
+        <div class="cav" style="font-size:19px;color:#c3cbd9">TUTORial · the front of the notebook</div>
+        <div style="display:inline-block;background:#ffe08a;padding:4px 18px;border-radius:3px;transform:rotate(-1.4deg)">
+          <span class="lil" style="font-size:21px">2</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NEXT = {{ next_url|tojson }};
+let mode = {{ mode|tojson }};
+let busy = false;
+
+function paint() {
+  $("tab-signup").classList.toggle("on", mode === "signup");
+  $("tab-login").classList.toggle("on", mode === "login");
+  $("form-flag").textContent = mode === "signup" ? "NEW HERE" : "WELCOME BACK";
+  $("btn-go").textContent = mode === "signup" ? "CREATE MY ACCOUNT" : "LOG ME BACK IN";
+  $("wrap-name").classList.toggle("hidden", mode !== "signup");
+  $("in-pass").setAttribute("autocomplete", mode === "signup" ? "new-password" : "current-password");
+  $("pass-hint").textContent = mode === "signup"
+    ? "Stored in our database only as a salted digest, never as text anyone could read."
+    : "The same password you picked when you signed up.";
+  hideError();
+}
+function showError(message) {
+  $("gate-error-text").textContent = message;
+  $("gate-error").classList.remove("hidden");
+  $("in-email").classList.add("bad");
+  $("in-pass").classList.add("bad");
+}
+function hideError() {
+  $("gate-error").classList.add("hidden");
+  $("in-email").classList.remove("bad");
+  $("in-pass").classList.remove("bad");
+}
+
+$("tab-signup").addEventListener("click", () => { mode = "signup"; paint(); });
+$("tab-login").addEventListener("click", () => { mode = "login"; paint(); });
+["in-email", "in-pass", "in-name"].forEach((id) => {
+  $(id).addEventListener("input", hideError);
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+});
+$("btn-go").addEventListener("click", go);
+
+async function go() {
+  if (busy) return;
+  const email = $("in-email").value.trim();
+  const password = $("in-pass").value;
+  if (!email || !password) { showError("Fill in both an email address and a password."); return; }
+
+  busy = true;
+  $("btn-go").disabled = true;
+  $("btn-go").textContent = mode === "signup" ? "MAKING YOUR PAGE" : "LOOKING YOU UP";
+  try {
+    const res = await fetch(mode === "signup" ? "/api/signup" : "/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, name: $("in-name").value.trim() }),
+    });
+    const data = await res.json().catch(() => ({ error: "The server sent something we could not read." }));
+    if (!res.ok) throw new Error(data.error || "That did not work.");
+    window.location.href = NEXT || "/curriculum";
+  } catch (err) {
+    showError(String(err.message || err));
+    busy = false;
+    $("btn-go").disabled = false;
+    paint();
+  }
+}
+
+paint();
+$("in-email").focus();
+</script>
+</body>
+</html>

@@ -1,6 +1,19 @@
 # TUTORial
 
-**The notebook that quizzes you back.**
+**Teaching students to use AI properly. TUTORial itself is only the worked example.**
+
+The site now has two halves.
+
+**The mission and the curriculum** are the point. TUTORial is not the best use anyone
+has found for artificial intelligence, and the front page says so in as many words. It
+is *an example* of a use that satisfies four properties the course teaches: it augments
+rather than replaces, it keeps a human accountable, it is honest about being wrong, and
+it can be checked. Behind a sign up gate sits a free eight unit curriculum, paraphrased
+from the *Student Guide to Artificial Intelligence, AI U 2025, Elon Edition*, with
+eleven interactive exercises that Claude marks component by component and eighteen
+achievements kept in a SQLite file.
+
+**The worked example** is the original prototype, described below.
 
 A student photographs a problem they are stuck on. TUTORial does *not* solve it for
 them. Instead Claude writes a **similar** problem, works that one on screen in six
@@ -32,8 +45,8 @@ pip install -r requirements.txt
 python app.py            # http://127.0.0.1:5000
 ```
 
-The first run downloads the three notebook typefaces (Lilita One, Patrick Hand,
-Caveat) into `static/fonts/`. They are only a reference for the SVG Claude writes —
+The first run downloads the three notebook typefaces (Over the Rainbow for titles,
+Sue Ellen Francisco for paragraphs, Caveat for margin asides) into `static/fonts/`. They are only a reference for the SVG Claude writes —
 the frames themselves are rendered by Qwen, so an offline first run costs nothing.
 
 Qwen knobs live at the top of `app.py`:
@@ -172,3 +185,123 @@ the page DOM.
 - **Reasoning accuracy is validated on geometry only.** The pipeline is subject-agnostic
   by construction, but nothing checks Claude's arithmetic beyond the checkpoint
   disagreement itself.
+
+---
+
+# TUTORial Academy
+
+The free curriculum, the accounts behind it, and the badge wall.
+
+## The pages
+
+| Route | What it is | Gated |
+|---|---|---|
+| `/` | The mission, the four properties, the worked example, the research, the works cited | no |
+| `/join` | Sign up or log in, with the same form switching between the two | no |
+| `/curriculum` | Eight units and eleven exercises | yes |
+| `/achievements` | Eighteen badges, when each was earned, and how every one is won | yes |
+| `/logout` | Clears the session cookie and returns to the mission | no |
+
+## The database
+
+Everything a learner is lives in one SQLite file, `tutorial.db`, created on first import
+and git-ignored.
+
+```
+users        id · email (unique, lowercased) · display_name
+             password_hash · password_salt · rounds · created_at · last_seen_at
+progress     user_id · item_key · score · finished_at        (unit1 … unit8, ex.<id>)
+achievements user_id · code · earned_at
+```
+
+Passwords are never stored. `store.hash_password` runs PBKDF2 HMAC SHA256 at 240,000
+rounds over a fresh 16 byte salt, and `verify_user` compares with
+`secrets.compare_digest` and returns one identical message for a bad email and a bad
+password, so the endpoint cannot be used to discover which addresses are registered.
+The Flask cookie signing key is generated once into `.flask-secret` beside the database,
+which is also git-ignored, so sessions survive a restart without a key in the source.
+
+`store.py` has no Flask import, so the whole storage layer can be exercised on its own.
+
+## The curriculum
+
+`curriculum.py` holds eight units, each a paraphrase of one stretch of the guide with
+the source pages named on the unit itself.
+
+1. Where AI already lives · pages 6 to 7
+2. What it means for your education · pages 7 and 24
+3. The anatomy of a prompt · page 8
+4. Read it like an editor · pages 9 to 10
+5. AI across your work · pages 11 through 15
+6. Integrity and attribution · pages 16 to 17
+7. The ethics you inherit · page 18
+8. A two part career plan · pages 19 through 23
+
+The guide is published under a Creative Commons Attribution NonCommercial ShareAlike
+licence, which is what makes a paraphrase inside a free course the intended use. The
+full entry is on the works cited page.
+
+## The exercises
+
+Eleven exercises across seven interaction kinds, so the course never becomes one form
+repeated. Nine of them are marked by a real Claude call. Two are marked in Python on
+purpose, because a course about not over using AI should not call a model to compare two
+lists.
+
+| Kind | Interaction | Marked by |
+|---|---|---|
+| `fields` | Several labelled boxes, one verdict each | Claude |
+| `single` | One box, one verdict per component found inside it | Claude |
+| `checks` | A checklist over a sample, plus a written finding | Claude |
+| `hunt` | Click the sentences in a passage that need verifying | Claude |
+| `sorter` | Drop each situation into one of several buckets | Claude |
+| `match` | Pair each job with the right family of tool | rules |
+| `order` | Put the seven turns of the writing loop back in sequence | rules |
+
+The flagship is **The Prompt Forge** in unit 3. The learner fills the six key elements
+of an effective prompt from page 8 of the guide, one box at a time, and presses
+**EXECUTE**. Each box goes to Claude with its own rubric and comes back green when the
+component is genuinely present and specific enough to change what a model would produce,
+red when it is not, and grey when an optional part was deliberately left out. Every
+verdict carries one sentence naming the specific thing that would fix it.
+
+**The Four Checks** in unit 4 is the second requested shape. A passage a model actually
+wrote sits above the guide's four families of check, accuracy and sources, bias, logical
+consistency, and emotional and manipulative language. The learner ticks every statement
+genuinely true of the passage, writes the one question they would send back, and Claude
+marks every tick and every deliberate non tick.
+
+The rest are Prompt Rescue, Augment or Replace, Claim Hunt, Rebuild the Loop, Where Is
+the Red Line, Write the Attribution, Ethics Triage, Your Two Part Plan and Pick the Right
+Family.
+
+**Without an API key the whole course still works.** Every grader falls back to a local
+rubric, the result says which engine marked it, and the page says so too.
+
+## Achievements
+
+Eighteen badges in `curriculum.ACHIEVEMENTS`, each with a small declarative rule the
+evaluator understands: making an account, finishing a named unit, clearing a named
+exercise, reaching four units, clearing every exercise, and finishing the lot. After any
+progress is recorded the server recomputes what the learner has earned and returns only
+what is new, which the page raises as a toast in the corner.
+
+## House style
+
+Every string a learner can read, across all four templates and `curriculum.py`, is
+written without a dash, a colon or a semicolon. `graders.py` puts the same requirement in
+the marker's system prompt and runs `scrub` over everything a model writes, so a verdict
+cannot break the rule either. The only exception is a web address inside a citation,
+which is printed exactly as it resolves because an edited address is a broken one, and
+the works cited page says so.
+
+## The files
+
+```
+app.py           the lesson prototype, plus accounts, pages and the exercise endpoint
+store.py         tutorial.db, hashing, progress and badges. No Flask import.
+curriculum.py    eight units, eleven exercises, eighteen badges, and the answer keys
+graders.py       one grader per interaction kind, Claude first with a local fallback
+static/notebook.css   the shared sheet of ruled paper
+templates/       index · join · curriculum · achievements
+```

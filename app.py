@@ -37,8 +37,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, jsonify, render_template, request, send_from_directory
+from flask import (Flask, abort, jsonify, redirect, render_template, request,
+                   send_from_directory, session, url_for)
 from werkzeug.utils import secure_filename
+
+import curriculum
+import graders
+import store
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG — prototyping stage: the key is a literal, there is no cloud storage,
@@ -86,6 +91,18 @@ PALETTE = {
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+app.secret_key = store.secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
+)
+store.init_db()
+
+
+def key_ready() -> bool:
+    """True when a real Claude key is configured, so exercises can be model marked."""
+    return "REPLACE-WITH-YOUR-KEY" not in ANTHROPIC_API_KEY
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,8 +112,8 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 # ─────────────────────────────────────────────────────────────────────────────
 
 GOOGLE_FONTS = {
-    "LilitaOne.ttf": "https://fonts.gstatic.com/s/lilitaone/v17/i7dPIFZ9Zz-WBtRtedDbUEY.ttf",
-    "PatrickHand.ttf": "https://fonts.gstatic.com/s/patrickhand/v25/LDI1apSQOAYtSuYWp8ZhfYeMWQ.ttf",
+    "OverTheRainbow.ttf": "https://fonts.gstatic.com/s/overtherainbow/v22/11haGoXG1k_HKhMLUWz7Mc7vvW5upvOm9NA2XG0.ttf",
+    "SueEllenFrancisco.ttf": "https://fonts.gstatic.com/s/sueellenfrancisco/v22/wXK3E20CsoJ9j1DDkjHcQ5ZL8xRaxru9ropF2lqk9H4.ttf",
     "Caveat.ttf": "https://fonts.gstatic.com/s/caveat/v23/WnznHAc5bAfYB2QRah7pcpNvOx-pjcB9SII.ttf",
 }
 
@@ -193,6 +210,9 @@ def ask_json(system: str, content: list[dict], schema: dict, max_tokens: int = 3
     return json.loads(strip_fences(text))
 
 
+graders.wire(ask_json, key_ready)
+
+
 def strip_fences(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -246,8 +266,8 @@ PALETTE — use these and nothing else
 - highlighter {PALETTE['yellow']} / {PALETTE['yellow_dk']} · lime {PALETTE['lime']} · muted {PALETTE['muted']}
 
 TYPE — three voices, never mixed up
-- font-family="Lilita One, sans-serif" for headlines and stamped labels. ALL CAPS, chunky.
-- font-family="Patrick Hand, cursive" for body text and worked math.
+- font-family="Over the Rainbow, cursive" for headlines and stamped labels. ALL CAPS.
+- font-family="Sue Ellen Francisco, cursive" for body text and worked math.
 - font-family="Caveat, cursive" for margin asides and annotations.
 - Body text is never smaller than 26px. Headlines are 44-64px.
 
@@ -263,7 +283,7 @@ LAYOUT AND LEGIBILITY
 - Keep all content inside x from 132 to 1180 and y from 70 to 660. Nothing touches an edge.
 - One idea per frame. Large, few elements, generous whitespace.
 - Every frame carries its own narration as a caption strip along the bottom (y around
-  600-660) in Patrick Hand at 28px on a cream card, so the video is followable with the
+  600-660) in Sue Ellen Francisco at 30px on a cream card, so the video is followable with the
   sound off. Wrap it yourself across <tspan x="..." dy="34"> lines — SVG does not wrap text.
 - Math is drawn, not described: draw the triangle, label the sides, show the proportion as
   laid-out text with the numbers in place.
@@ -1161,7 +1181,11 @@ def index():
     return render_template(
         "index.html",
         checkpoint_count=CHECKPOINT_COUNT,
-        key_missing="REPLACE-WITH-YOUR-KEY" in ANTHROPIC_API_KEY,
+        key_missing=not key_ready(),
+        me=current_user(),
+        unit_count=len(curriculum.UNITS),
+        exercise_count=len(curriculum.EXERCISES),
+        badge_count=len(curriculum.ACHIEVEMENTS),
     )
 
 
@@ -1408,7 +1432,210 @@ def parse_number(text: str) -> float | None:
     return None
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TUTORIAL ACADEMY — accounts, the free curriculum, and the badge wall.
+#
+# Everything a learner is and everything they have unlocked lives in tutorial.db.
+# The lesson prototype above stays in memory, because a lesson is a session. An
+# account is not.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def current_user() -> dict[str, Any] | None:
+    user_id = session.get("uid")
+    if not user_id:
+        return None
+    user = store.get_user(int(user_id))
+    if not user:
+        session.pop("uid", None)
+    return user
+
+
+def require_login() -> dict[str, Any]:
+    user = current_user()
+    if not user:
+        abort(401, "Sign up or log in to open this.")
+    return user
+
+
+def sign_in(user: dict[str, Any]) -> None:
+    session.clear()
+    session["uid"] = user["id"]
+    session.permanent = True
+
+
+def sync_badges(user_id: int) -> list[dict]:
+    """Award everything this learner has now earned. Returns only the new ones."""
+    finished = set(store.progress_map(user_id))
+    already = store.earned_map(user_id)
+    fresh = []
+    for code in curriculum.earned_codes(finished):
+        if code not in already and store.award(user_id, code):
+            fresh.append(curriculum.ACHIEVEMENT_BY_CODE[code])
+    return fresh
+
+
+def learner_state(user: dict[str, Any]) -> dict[str, Any]:
+    progress = store.progress_map(user["id"])
+    earned = store.earned_map(user["id"])
+    units_done = [k for k in curriculum.UNIT_KEYS if k in progress]
+    exercises_done = [k for k in curriculum.EXERCISE_KEYS if k in progress]
+    return {
+        "email": user["email"],
+        "name": user["display_name"],
+        "progress": progress,
+        "earned": earned,
+        "units_done": len(units_done),
+        "unit_total": len(curriculum.UNIT_KEYS),
+        "exercises_done": len(exercises_done),
+        "exercise_total": len(curriculum.EXERCISE_KEYS),
+        "badge_total": len(curriculum.ACHIEVEMENTS),
+    }
+
+
+# ── pages ────────────────────────────────────────────────────────────────────
+
+@app.get("/join")
+def join():
+    if current_user():
+        return redirect(request.args.get("next") or url_for("curriculum_page"))
+    return render_template("join.html", me=None,
+                           next_url=request.args.get("next", "/curriculum"),
+                           mode=("login" if request.args.get("mode") == "login" else "signup"),
+                           unit_count=len(curriculum.UNITS),
+                           exercise_count=len(curriculum.EXERCISES),
+                           badge_count=len(curriculum.ACHIEVEMENTS))
+
+
+@app.get("/curriculum")
+def curriculum_page():
+    user = current_user()
+    if not user:
+        return redirect(url_for("join", next="/curriculum"))
+    return render_template(
+        "curriculum.html",
+        me=user,
+        state=learner_state(user),
+        units=curriculum.public_units(),
+        badges=curriculum.ACHIEVEMENTS,
+        key_missing=not key_ready(),
+        source_line=curriculum.SOURCE_SHORT,
+    )
+
+
+@app.get("/achievements")
+def achievements_page():
+    user = current_user()
+    if not user:
+        return redirect(url_for("join", next="/achievements"))
+    return render_template(
+        "achievements.html",
+        me=user,
+        state=learner_state(user),
+        badges=curriculum.ACHIEVEMENTS,
+        units=curriculum.public_units(),
+    )
+
+
+@app.get("/logout")
+def logout_page():
+    session.clear()
+    return redirect(url_for("index"))
+
+
+# ── account api ──────────────────────────────────────────────────────────────
+
+@app.post("/api/signup")
+def api_signup():
+    body = request.json or {}
+    try:
+        user = store.create_user(body.get("email", ""), body.get("password", ""),
+                                 body.get("name", ""))
+    except store.StoreError as exc:
+        return jsonify({"error": str(exc)}), 400
+    sign_in(user)
+    fresh = sync_badges(user["id"])
+    return jsonify({"ok": True, "state": learner_state(user), "unlocked": fresh})
+
+
+@app.post("/api/login")
+def api_login():
+    body = request.json or {}
+    try:
+        user = store.verify_user(body.get("email", ""), body.get("password", ""))
+    except store.StoreError as exc:
+        return jsonify({"error": str(exc)}), 400
+    sign_in(user)
+    sync_badges(user["id"])
+    return jsonify({"ok": True, "state": learner_state(user)})
+
+
+@app.post("/api/logout")
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/me")
+def api_me():
+    user = current_user()
+    if not user:
+        return jsonify({"signed_in": False})
+    return jsonify({"signed_in": True, "state": learner_state(user)})
+
+
+# ── progress and badges ──────────────────────────────────────────────────────
+
+@app.post("/api/progress")
+def api_progress():
+    user = require_login()
+    body = request.json or {}
+    key = str(body.get("key", ""))
+    if key not in curriculum.ALL_KEYS:
+        abort(404, "no such piece of the course")
+    store.record_progress(user["id"], key, float(body.get("score", 1.0)))
+    fresh = sync_badges(user["id"])
+    return jsonify({"ok": True, "state": learner_state(user), "unlocked": fresh})
+
+
+@app.post("/api/progress/reset")
+def api_progress_reset():
+    user = require_login()
+    store.clear_progress(user["id"])
+    sync_badges(user["id"])
+    return jsonify({"ok": True, "state": learner_state(user)})
+
+
+# ── the exercises themselves ─────────────────────────────────────────────────
+
+@app.post("/api/exercise")
+def api_exercise():
+    """Mark one exercise. This is where Claude reads a learner's work."""
+    user = require_login()
+    body = request.json or {}
+    exercise_id = str(body.get("exercise", ""))
+    if exercise_id not in curriculum.EXERCISES:
+        abort(404, "no such exercise")
+
+    try:
+        result = graders.grade(exercise_id, body.get("payload") or {})
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"error": f"The marker could not run. {exc}"}), 502
+
+    result["exercise"] = exercise_id
+    if result.get("passed"):
+        store.record_progress(user["id"], "ex." + exercise_id,
+                              float(result.get("score", 1)))
+        result["unlocked"] = sync_badges(user["id"])
+    else:
+        result["unlocked"] = []
+    result["state"] = learner_state(user)
+    return jsonify(result)
+
+
 @app.errorhandler(400)
+@app.errorhandler(401)
 @app.errorhandler(404)
 @app.errorhandler(409)
 @app.errorhandler(413)
@@ -1419,5 +1646,6 @@ def api_error(exc):
 if __name__ == "__main__":
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    store.init_db()
     ensure_fonts()
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)), debug=False, threaded=True)

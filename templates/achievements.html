@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TUTORial · your achievements</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Over+the+Rainbow&family=Sue+Ellen+Francisco&family=Caveat:wght@500;700&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='notebook.css') }}" rel="stylesheet">
+</head>
+<body>
+<div class="desk"><div class="wrap">
+
+  <div class="tabrail">
+    <a class="tab go" href="/" style="text-decoration:none;display:block">OUR MISSION</a>
+    <a class="tab go" href="/curriculum" style="text-decoration:none;display:block">THE CURRICULUM
+      <span class="sub" id="rail-progress"></span></a>
+    <div class="tab on" data-tab="badges">ACHIEVEMENTS<span class="sub" id="rail-badges"></span></div>
+    <a class="tab go" href="/" style="text-decoration:none;display:block">THE EXAMPLE</a>
+  </div>
+
+  <div class="page">
+    <div class="rules"></div><div class="mgn-a"></div><div class="mgn-b"></div><div class="mgn-r"></div>
+    <div class="hole" style="top:120px"></div><div class="hole" style="top:400px"></div><div class="hole" style="top:680px"></div>
+
+    <div class="inner">
+
+      <div class="mast">
+        <div style="display:flex;align-items:center;gap:16px">
+          <div class="badge-t"><span class="lil" style="font-size:27px;color:#fffdf7">T</span></div>
+          <div>
+            <a href="/" style="text-decoration:none;color:inherit">
+              <div class="lil" style="font-size:38px;line-height:.98;letter-spacing:.01em">TUTOR<span style="color:#e79ec0">ial</span></div></a>
+            <div class="cav muted" style="font-size:20px;margin-top:1px">what you have earned so far</div>
+          </div>
+        </div>
+        <div class="whoami">
+          <span class="dot"></span>
+          <span class="hand" style="font-size:18px;color:#5a6382">{{ me.display_name }}</span>
+          <a class="cav" href="/logout" style="font-size:18px;color:#a3abc2;text-decoration:none;border-bottom:2px solid #e2ecf5">log out</a>
+        </div>
+      </div>
+      <div class="rule-sky"></div><div class="rule-blush"></div>
+
+      <div style="display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:8px">
+        <h1 class="lil" style="font-size:44px;line-height:1.06;margin:0">YOUR ACHIEVEMENTS</h1>
+        <div class="stamp" style="transform:rotate(1.4deg)"><span id="earned-count"></span></div>
+      </div>
+      <p class="hand" style="font-size:21px;line-height:33px;color:#5a6382;margin:8px 0 22px;max-width:820px">
+        Nothing here can be bought, skipped or awarded for showing up. Each one is unlocked by finishing
+        a unit or by clearing an exercise that Claude actually marked. They live in the same database row
+        as your account, so they are still here next term.</p>
+
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <div style="flex:1 1 300px;min-width:240px"><div class="ribbonbar"><div id="bar" style="width:0%"></div></div></div>
+        <div class="lil" style="font-size:18px"><span class="hl" id="count-units" style="padding:0 5px"></span></div>
+        <div class="lil" style="font-size:18px"><span class="hl" id="count-ex" style="padding:0 5px"></span></div>
+      </div>
+      <div class="cav muted" style="font-size:20px;margin-bottom:30px" id="nextline"></div>
+
+      <div class="stamp" style="transform:rotate(-.8deg);margin-bottom:18px">THE WALL</div>
+      <div class="badgegrid" id="wall"></div>
+
+      <div class="stamp" style="transform:rotate(.7deg);margin:34px 0 16px">WHERE EACH ONE COMES FROM</div>
+      <div id="ledger"></div>
+
+      <div style="display:flex;gap:12px;margin-top:30px;flex-wrap:wrap">
+        <a href="/curriculum" class="btn btn-mint" style="flex:2 1 300px;font-size:20px;padding:17px;border-radius:15px;
+           text-align:center;text-decoration:none;transform:rotate(-.35deg)">BACK TO THE CURRICULUM →</a>
+        <button class="btn btn-sky" id="btn-reset" style="flex:1 1 200px;font-size:17px;padding:17px;border-radius:15px">
+          START THE COURSE OVER</button>
+      </div>
+      <div class="cav" id="reset-note" style="font-size:19px;color:#a3abc2;margin-top:9px">
+        Starting over clears your finished units and your achievements from the database. Your account stays.</div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:44px;padding-top:16px">
+        <div class="cav" style="font-size:19px;color:#c3cbd9">TUTORial · the badge wall</div>
+        <div style="display:inline-block;background:#ffe08a;padding:4px 18px;border-radius:3px;transform:rotate(-1.4deg)">
+          <span class="lil" style="font-size:21px">12</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div></div>
+
+<script>
+"use strict";
+const BADGES = {{ badges|tojson }};
+const UNITS = {{ units|tojson }};
+let STATE = {{ state|tojson }};
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs, html) => {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+const esc = (s) => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const stamp = (seconds) => {
+  if (!seconds) return "";
+  const d = new Date(seconds * 1000);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+};
+
+/** Plain language for how a badge is earned, built from its own rule. */
+function howEarned(badge) {
+  const rule = badge.rule || {};
+  if (rule.type === "account") return "Unlocked the moment you made an account.";
+  if (rule.type === "units") return `Unlocked once ${rule.count} units are marked as read.`;
+  if (rule.type === "all_exercises") return "Unlocked once every exercise in the course has been cleared.";
+  if (rule.type === "everything") return "Unlocked once every unit is read and every exercise is cleared.";
+  if (rule.type === "item" && String(rule.key).startsWith("ex.")) {
+    return "Unlocked by clearing that exercise, which means enough of its parts came back approved.";
+  }
+  if (rule.type === "item") {
+    const unit = UNITS.find((u) => u.id === rule.key);
+    // Lowercase the title so it reads as a sentence, but leave the acronyms alone.
+    const said = unit ? unit.title.toLowerCase().replace(/\bai\b/g, "AI").replace(/\budl\b/g, "UDL") : "";
+    return unit ? `Unlocked by reading unit ${unit.number}, ${said}.`
+                : "Unlocked by finishing that piece of the course.";
+  }
+  return "Unlocked somewhere in the course.";
+}
+
+function paint() {
+  const earned = STATE.earned || {};
+  const have = Object.keys(earned).length;
+  $("earned-count").textContent = `${have} OF ${BADGES.length} UNLOCKED`;
+  $("count-units").textContent = `${STATE.units_done} of ${STATE.unit_total} UNITS`;
+  $("count-ex").textContent = `${STATE.exercises_done} of ${STATE.exercise_total} EXERCISES`;
+  $("bar").style.width = Math.round((have / BADGES.length) * 100) + "%";
+  $("rail-progress").textContent = `${STATE.units_done} of ${STATE.unit_total} units done`;
+  $("rail-badges").textContent = `${have} of ${BADGES.length} earned`;
+
+  const nextUp = BADGES.find((b) => !(b.code in earned));
+  $("nextline").textContent = nextUp
+    ? `Next one within reach, ${nextUp.title}. ${howEarned(nextUp)}`
+    : "Every achievement in the course is on the wall. There is nothing left for us to give you.";
+
+  const wall = $("wall");
+  wall.innerHTML = "";
+  BADGES.forEach((badge) => {
+    const has = badge.code in earned;
+    const card = el("div", {
+      class: "badge" + (has ? "" : " locked"),
+      style: `--c:${badge.color};--t:${badge.tint};--s:${badge.tint}`,
+    });
+    card.innerHTML =
+      (has ? `<div class="ribbon">${esc(stamp(earned[badge.code]))}</div>` : "") +
+      `<div class="seal">${has ? esc(badge.mark) : "○"}</div>` +
+      `<div class="lil bname" style="font-size:20px;line-height:1.12;margin-bottom:5px">${esc(badge.title)}</div>` +
+      `<div class="hand" style="font-size:18px;line-height:26px;color:${has ? "#5a6382" : "#c3cbd9"}">` +
+        `${has ? esc(badge.note) : "Still locked."}</div>`;
+    wall.appendChild(card);
+  });
+
+  const ledger = $("ledger");
+  ledger.innerHTML = "";
+  BADGES.forEach((badge) => {
+    const has = badge.code in earned;
+    const row = el("div", {
+      style: "display:flex;gap:14px;align-items:flex-start;padding:11px 14px;border-radius:12px;margin-bottom:7px;" +
+             `border:2.5px solid ${has ? badge.color : "#e2ecf5"};background:${has ? badge.tint : "#fbfcfd"}`,
+    });
+    row.innerHTML =
+      `<span class="lil" style="font-size:19px;flex-shrink:0;width:26px;text-align:center;color:${has ? badge.color : "#c3cbd9"}">` +
+        `${has ? esc(badge.mark) : "○"}</span>` +
+      `<div><span class="lil" style="font-size:17px;color:${has ? "#3d4663" : "#a3abc2"}">${esc(badge.title)}</span>` +
+      `<div class="hand" style="font-size:18px;line-height:27px;color:${has ? "#5a6382" : "#b6bfd0"}">${esc(howEarned(badge))}</div></div>`;
+    ledger.appendChild(row);
+  });
+}
+
+$("btn-reset").addEventListener("click", async () => {
+  const button = $("btn-reset");
+  if (button.dataset.armed !== "yes") {
+    button.dataset.armed = "yes";
+    button.textContent = "PRESS AGAIN TO CONFIRM";
+    button.className = "btn btn-blush";
+    $("reset-note").textContent = "This really does clear every finished unit and every achievement. Press anything else to change your mind.";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "CLEARING";
+  try {
+    const res = await fetch("/api/progress/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const data = await res.json();
+    if (data.state) STATE = data.state;
+    paint();
+    button.textContent = "START THE COURSE OVER";
+    button.className = "btn btn-sky";
+    button.dataset.armed = "no";
+    button.disabled = false;
+    $("reset-note").textContent = "Cleared. The curriculum is waiting with a clean sheet.";
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = "THAT DID NOT CLEAR. TRY AGAIN.";
+  }
+});
+
+paint();
+</script>
+</body>
+</html>
