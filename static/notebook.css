@@ -2,8 +2,13 @@
    notebook.css — the shared TUTORial page.
 
    Every screen in the project renders on the same sheet of ruled paper. The
-   masthead and every stamped label are set in Over the Rainbow. Every
+   masthead and every stamped label are set in Architects Daughter. Every
    paragraph is set in Sue Ellen Francisco. Caveat stays as the margin hand.
+
+   The works cited page is the one exception. It keeps the notebook's original
+   two hands, Lilita One for its titles and Patrick Hand for its paragraphs, so
+   the bibliography still reads as a bibliography. See the block at the foot of
+   this file.
 
    House rule for the copy sitting on top of this stylesheet. No dashes, no
    colons, no semicolons anywhere a learner can read them.
@@ -37,7 +42,7 @@ input:focus{outline:none}
 @media (max-width:1100px){.tabrail{position:static;flex-direction:row;margin-bottom:14px}}
 .tab{cursor:pointer;width:158px;padding:15px 14px 15px 18px;background:#fffdf7;border:3px solid #7fc4e8;border-left:none;
   border-radius:0 14px 14px 0;box-shadow:2px 2px 0 rgba(120,140,175,.1);transition:transform .16s ease;
-  font-family:'Over the Rainbow',cursive;font-size:14px;letter-spacing:.06em;color:#3d4663;white-space:nowrap}
+  font-family:'Architects Daughter',cursive;font-size:14px;letter-spacing:.06em;color:#3d4663;white-space:nowrap}
 .tab:hover{transform:translateX(4px)}
 .tab.on{box-shadow:4px 4px 0 rgba(120,140,175,.18)}
 .tab[data-tab=lesson]{border-color:#7fc4e8} .tab[data-tab=lesson].on{background:#a8d8f0}
@@ -55,7 +60,7 @@ input:focus{outline:none}
 @media (max-width:760px){.inner{padding:30px 24px}.mgn-a,.mgn-b,.mgn-r,.hole{display:none}}
 
 /* ── type ──────────────────────────────────────────────────────────────── */
-.lil{font-family:'Over the Rainbow',cursive}
+.lil{font-family:'Architects Daughter',cursive}
 .hand{font-family:'Sue Ellen Francisco',cursive}
 .cav{font-family:'Caveat',cursive}
 .hl{background:linear-gradient(to bottom,transparent 14%,#ffe08a 14%,#ffe08a 86%,transparent 86%);padding:0 6px}
@@ -69,7 +74,7 @@ input:focus{outline:none}
 .rule-blush{height:3px;width:62%;background:#f7c8dc;border-radius:4px;margin-bottom:30px;transform:rotate(.2deg)}
 
 /* ── buttons ───────────────────────────────────────────────────────────── */
-.btn{font-family:'Over the Rainbow',cursive;letter-spacing:.03em;cursor:pointer;border-radius:13px;transition:background .13s,opacity .15s}
+.btn{font-family:'Architects Daughter',cursive;letter-spacing:.03em;cursor:pointer;border-radius:13px;transition:background .13s,opacity .15s}
 .btn:disabled{cursor:not-allowed;opacity:.5}
 .btn-lilac{background:#c9b6e4;border:3.5px solid #a98fd4;color:#fffdf7;box-shadow:3px 4px 0 #a98fd4}
 .btn-lilac:hover:not(:disabled){background:#b9a3e3}
@@ -89,24 +94,24 @@ input:focus{outline:none}
 .torn-sm{clip-path:polygon(0 0,calc(100% - 24px) 0,100% 24px,100% 100%,0 100%)}
 .tape{position:absolute;height:28px;border-left:2px dashed rgba(255,255,255,.8);border-right:2px dashed rgba(255,255,255,.8)}
 .stamp{display:inline-block;background:#fffdf7;border:3.5px solid #ffe08a;border-radius:11px;padding:7px 17px;
-  box-shadow:3px 3px 0 #fff3cd;font-family:'Over the Rainbow',cursive;font-size:17px;letter-spacing:.04em}
+  box-shadow:3px 3px 0 #fff3cd;font-family:'Architects Daughter',cursive;font-size:17px;letter-spacing:.04em}
 .flagbox{position:relative;border:4px solid var(--c);border-radius:5px;padding:34px 24px 22px;background:#fffdf7}
 .flag{position:absolute;top:-18px;left:16px;display:flex;align-items:center}
-.flag>span{background:var(--c);padding:6px 13px 6px 15px;font-family:'Over the Rainbow',cursive;font-size:15px;color:#fffdf7;letter-spacing:.06em}
+.flag>span{background:var(--c);padding:6px 13px 6px 15px;font-family:'Architects Daughter',cursive;font-size:15px;color:#fffdf7;letter-spacing:.06em}
 .flag>i{width:0;height:0;border-top:15px solid transparent;border-bottom:15px solid transparent;border-left:14px solid var(--c)}
 .note{position:relative;padding:20px 22px 22px}
 
 /* ── loader (notebook aesthetic) ───────────────────────────────────────── */
 .frames{display:flex;gap:13px;justify-content:center;align-items:flex-end;height:118px;margin-bottom:30px}
 .fcard{width:76px;height:98px;border-radius:6px;border:3.4px solid #dbe6f0;background:#fffdf7;box-shadow:3px 4px 0 rgba(219,230,240,.5);
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:22px;color:#c3cbd9;animation:nb-frame .5s ease both}
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:22px;color:#c3cbd9;animation:nb-frame .5s ease both}
 .fcard.done{background:#86ddc0;border-color:#5cc4a0;box-shadow:3px 4px 0 rgba(92,196,160,.4);color:#fffdf7}
 .fcard.now{background:#ffe08a;border-color:#f0c85e;box-shadow:3px 4px 0 rgba(240,200,94,.45);color:#fffdf7}
 .checklist{background:#fffdf7;border:3.5px solid #a8d8f0;border-radius:16px;padding:12px;box-shadow:5px 6px 0 #dcf0fb;text-align:left;transform:rotate(-.3deg)}
 .crow{display:flex;align-items:center;gap:15px;padding:13px 15px;border-radius:11px}
 .crow.now{background:#f2fafe}
 .cbadge{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
-  background:#f2f6fa;border:2.5px solid #e2ecf5;font-family:'Over the Rainbow',cursive;font-size:15px;color:#c3cbd9}
+  background:#f2f6fa;border:2.5px solid #e2ecf5;font-family:'Architects Daughter',cursive;font-size:15px;color:#c3cbd9}
 .crow.done .cbadge{background:#86ddc0;border-color:#5cc4a0;color:#fffdf7}
 .crow.now .cbadge{background:#a8d8f0;border-color:#7fc4e8;color:#fffdf7}
 .clabel{font-family:'Sue Ellen Francisco',cursive;font-size:21px;color:#b6bfd0}
@@ -123,7 +128,7 @@ input:focus{outline:none}
 .nlbar{position:absolute;top:9px;left:0;right:0;height:4px;background:#86ddc0}
 .nltick{position:relative;width:4px;height:22px;background:#86ddc0;margin:0 auto}
 .nldot{position:relative;margin:5px auto 0;width:30px;height:30px;border-radius:50%;background:#fffdf7;border:3px solid #cfe3f2;
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:15px;color:#3d4663}
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:15px;color:#3d4663}
 .nldot.done{background:#86ddc0;border-color:#5cc4a0;color:#fffdf7}
 .nldot.now{background:#ffe08a;border-color:#f0c85e}
 .nllabel{font-family:'Caveat',cursive;font-size:16px;color:#c3cbd9;margin-top:3px;line-height:1.1;padding:0 2px}
@@ -134,7 +139,7 @@ input:focus{outline:none}
 .stage{position:relative;background:#2f3550;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:320px}
 .stage video{width:100%;max-height:430px;object-fit:contain;cursor:pointer;display:block}
 .chip{position:absolute;left:12px;bottom:12px;display:flex;align-items:center;gap:9px;background:#fffdf7;border-radius:11px;
-  padding:7px 14px;transform:rotate(-1deg);font-family:'Over the Rainbow',cursive;font-size:15px;color:#3d4663;letter-spacing:.04em}
+  padding:7px 14px;transform:rotate(-1deg);font-family:'Architects Daughter',cursive;font-size:15px;color:#3d4663;letter-spacing:.04em}
 .scrub{position:relative;flex:1;height:26px;display:flex;align-items:center;cursor:pointer}
 .scrub-track{position:absolute;left:0;right:0;height:10px;border-radius:999px;background:#eef4f9;border:2.5px solid #cfe3f2}
 .scrub-lock{position:absolute;right:0;height:10px;border-radius:0 999px 999px 0;border:2.5px solid #cfe3f2;border-left:none;
@@ -147,16 +152,16 @@ input:focus{outline:none}
   font-family:'Sue Ellen Francisco',cursive;font-size:19px;line-height:1.35;background:#fffdf7;border:3px solid #e2ecf5;color:#3d4663;
   box-shadow:2px 3px 0 #eef4f9;transition:all .13s}
 .opt .letter{width:30px;height:30px;flex-shrink:0;border-radius:7px;display:flex;align-items:center;justify-content:center;
-  background:#f7fafc;border:2.5px solid #e2ecf5;font-family:'Over the Rainbow',cursive;font-size:15px;color:#3d4663}
+  background:#f7fafc;border:2.5px solid #e2ecf5;font-family:'Architects Daughter',cursive;font-size:15px;color:#3d4663}
 .opt.sel{background:#f6f1ff;border-color:#a98fd4;box-shadow:3px 4px 0 #d9cbf0}
 .opt.sel .letter{background:#ffe08a;border-color:#f0c85e}
 .opt.ok{background:#e6f7f0;border-color:#5cc4a0;color:#3d8f72;box-shadow:3px 4px 0 rgba(92,196,160,.4)}
 .opt.ok .letter{background:#86ddc0;border-color:#5cc4a0}
 .opt.no{background:#fdeef4;border-color:#f4b8cd;color:#c2557f;box-shadow:3px 4px 0 rgba(244,184,205,.4)}
 .opt.no .letter{background:#f4b8cd;border-color:#e79ec0}
-.opt .mark{font-family:'Over the Rainbow',cursive;font-size:19px;margin-left:auto}
+.opt .mark{font-family:'Architects Daughter',cursive;font-size:19px;margin-left:auto}
 
-.answerline{flex:1;font-family:'Over the Rainbow',cursive;font-size:26px;color:#3d4663;padding:11px 15px;border:none;
+.answerline{flex:1;font-family:'Architects Daughter',cursive;font-size:26px;color:#3d4663;padding:11px 15px;border:none;
   border-bottom:4px solid #cfe3f2;background:#f6fbfe;border-radius:8px 8px 0 0;transition:all .13s;width:100%}
 .answerline.ok{border-bottom-color:#5cc4a0;background:#e6f7f0}
 .answerline.no{border-bottom-color:#f4b8cd;background:#fdeef4}
@@ -164,7 +169,7 @@ input:focus{outline:none}
 .roadrow{display:flex;align-items:flex-start;gap:13px;padding:9px 12px;border-radius:11px;border:2.5px solid transparent;margin-bottom:5px}
 .roadrow.now{background:#f6f1ff;border-color:#d9cbf0}
 .roadnum{width:29px;height:29px;flex-shrink:0;border-radius:7px;display:flex;align-items:center;justify-content:center;
-  background:#f2f6fa;border:2.5px solid #e2ecf5;font-family:'Over the Rainbow',cursive;font-size:15px;color:#c3cbd9}
+  background:#f2f6fa;border:2.5px solid #e2ecf5;font-family:'Architects Daughter',cursive;font-size:15px;color:#c3cbd9}
 .roadrow.done .roadnum{background:#86ddc0;border-color:#5cc4a0;color:#fffdf7}
 .roadrow.now .roadnum{background:#c9b6e4;border-color:#a98fd4;color:#fffdf7}
 .roadtext{font-family:'Sue Ellen Francisco',cursive;font-size:19px;line-height:29px;color:#b6bfd0}
@@ -212,12 +217,12 @@ input:focus{outline:none}
 .mission{position:relative;background:#fffaeb;border:4px solid #f0c85e;border-radius:5px;padding:30px 32px 26px;
   transform:rotate(-.3deg);box-shadow:6px 8px 0 rgba(240,200,94,.38)}
 .mission .pin{position:absolute;top:-15px;left:28px;background:#f0c85e;color:#fffdf7;padding:5px 16px;
-  font-family:'Over the Rainbow',cursive;font-size:16px;letter-spacing:.06em;border-radius:4px}
+  font-family:'Architects Daughter',cursive;font-size:16px;letter-spacing:.06em;border-radius:4px}
 .notbest{background:#fdeef4;border:4px dashed #f4b8cd;border-radius:16px;padding:22px 26px;transform:rotate(.35deg)}
 .pillar{flex:1 1 250px;background:#fffdf7;border:3.5px solid var(--c);border-radius:14px;padding:18px 20px;
   box-shadow:4px 5px 0 var(--s)}
 .pillar .n{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;
-  background:var(--c);color:#fffdf7;font-family:'Over the Rainbow',cursive;font-size:19px;margin-bottom:9px}
+  background:var(--c);color:#fffdf7;font-family:'Architects Daughter',cursive;font-size:19px;margin-bottom:9px}
 
 /* ── unit cards on the contents page ────────────────────────────────────── */
 .unitcard{position:relative;display:flex;gap:18px;align-items:flex-start;background:#fffdf7;border:3.5px solid var(--c);
@@ -226,16 +231,16 @@ input:focus{outline:none}
 .unitcard:hover{transform:translateX(5px)}
 .unitcard.done{background:#f7fdfa}
 .unitnum{width:52px;height:52px;flex-shrink:0;border-radius:13px;background:var(--c);color:#fffdf7;
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:25px;
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:25px;
   transform:rotate(-3deg);box-shadow:2px 3px 0 var(--s)}
 .unitcard.done .unitnum{background:#5cc4a0;box-shadow:2px 3px 0 rgba(92,196,160,.45)}
-.pill{display:inline-block;border-radius:999px;padding:3px 13px;font-family:'Over the Rainbow',cursive;font-size:14px;
+.pill{display:inline-block;border-radius:999px;padding:3px 13px;font-family:'Architects Daughter',cursive;font-size:14px;
   letter-spacing:.05em;border:2.5px solid var(--c);color:var(--c);background:#fffdf7}
 .pill.filled{background:var(--c);color:#fffdf7}
 
 /* ── one open unit ──────────────────────────────────────────────────────── */
 .readcard{border-left:6px solid var(--c);background:var(--t);border-radius:0 14px 14px 0;padding:18px 22px;margin-bottom:16px}
-.readcard h4{font-family:'Over the Rainbow',cursive;font-size:23px;margin:0 0 8px;color:#3d4663;line-height:1.15}
+.readcard h4{font-family:'Architects Daughter',cursive;font-size:23px;margin:0 0 8px;color:#3d4663;line-height:1.15}
 .readbullet{display:flex;gap:11px;margin-top:7px}
 .readbullet>span.d{flex-shrink:0;width:9px;height:9px;border-radius:50%;background:var(--c);margin-top:11px}
 .sourceline{font-family:'Caveat',cursive;font-size:19px;color:#a3abc2;border-top:2px dashed #e2ecf5;padding-top:11px;margin-top:6px}
@@ -244,19 +249,19 @@ input:focus{outline:none}
 .exbox{position:relative;background:#fffdf7;border:4px solid var(--c);border-radius:5px;padding:34px 24px 24px;
   margin:26px 0;box-shadow:6px 8px 0 var(--s)}
 .exkind{position:absolute;top:-15px;right:16px;background:#fffdf7;border:3px solid var(--c);border-radius:9px;padding:3px 12px;
-  font-family:'Over the Rainbow',cursive;font-size:13px;letter-spacing:.05em}
+  font-family:'Architects Daughter',cursive;font-size:13px;letter-spacing:.05em}
 .exfield{border:3.5px solid #dbe6f0;border-radius:14px;padding:14px 16px;margin-bottom:14px;background:#fdfeff;transition:all .16s}
 .exfield.ok{border-color:#5cc4a0;background:#e6f7f0}
 .exfield.no{border-color:#e79ec0;background:#fdeef4}
 .exfield.skip{border-color:#dbe6f0;background:#f7f9fb;opacity:.78}
 .exfield .flagline{display:flex;align-items:center;gap:10px;margin-bottom:7px;flex-wrap:wrap}
-.exfield .tagname{font-family:'Over the Rainbow',cursive;font-size:15px;letter-spacing:.05em;color:#fffdf7;
+.exfield .tagname{font-family:'Architects Daughter',cursive;font-size:15px;letter-spacing:.05em;color:#fffdf7;
   background:var(--c);border-radius:7px;padding:4px 11px}
 .exfield textarea,.exfield input[type=text]{width:100%;border:none;background:transparent;resize:vertical;
   font-family:'Sue Ellen Francisco',cursive;font-size:20px;line-height:30px;color:#3d4663;outline:none;padding:2px 0}
 .exfield textarea::placeholder,.exfield input::placeholder{color:#c3cbd9}
 .verdict{display:flex;gap:9px;align-items:flex-start;margin-top:9px;padding-top:9px;border-top:2px dashed rgba(0,0,0,.07)}
-.verdict .mk{font-family:'Over the Rainbow',cursive;font-size:19px;flex-shrink:0;line-height:1.2}
+.verdict .mk{font-family:'Architects Daughter',cursive;font-size:19px;flex-shrink:0;line-height:1.2}
 .verdict .tx{font-family:'Sue Ellen Francisco',cursive;font-size:18px;line-height:27px}
 .verdict.ok .mk,.verdict.ok .tx{color:#3d8f72}
 .verdict.no .mk,.verdict.no .tx{color:#c2557f}
@@ -272,7 +277,7 @@ input:focus{outline:none}
   font-family:'Sue Ellen Francisco',cursive;font-size:19px;line-height:28px;color:#3d4663;transition:all .12s}
 .tick:hover{border-color:#cfe3f2}
 .tick .bx{width:26px;height:26px;flex-shrink:0;border-radius:7px;border:2.5px solid #cfe3f2;background:#f7fafc;
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:16px;color:#fffdf7}
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:16px;color:#fffdf7}
 .tick.on{background:#f6f1ff;border-color:#a98fd4;box-shadow:3px 4px 0 #d9cbf0}
 .tick.on .bx{background:#a98fd4;border-color:#8b7bb8}
 .tick.ok{background:#e6f7f0;border-color:#5cc4a0;box-shadow:3px 4px 0 rgba(92,196,160,.38)}
@@ -284,7 +289,7 @@ input:focus{outline:none}
 .tick.no .why{color:#c2557f}
 
 .bucketrow{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
-.bucketbtn{font-family:'Over the Rainbow',cursive;font-size:14px;letter-spacing:.04em;padding:6px 13px;border-radius:10px;
+.bucketbtn{font-family:'Architects Daughter',cursive;font-size:14px;letter-spacing:.04em;padding:6px 13px;border-radius:10px;
   cursor:pointer;background:#fffdf7;border:2.5px solid var(--c);color:var(--c);transition:all .12s}
 .bucketbtn.on{background:var(--c);color:#fffdf7}
 .bucketbtn:hover{background:var(--t)}
@@ -309,11 +314,11 @@ input:focus{outline:none}
 .orderrow.ok{border-color:#5cc4a0;background:#e6f7f0}
 .orderrow.no{border-color:#e79ec0;background:#fdeef4}
 .orderrow .slot{width:34px;height:34px;flex-shrink:0;border-radius:9px;background:#ffe08a;border:2.5px solid #f0c85e;
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:17px}
-.orderrow .who{font-family:'Over the Rainbow',cursive;font-size:13px;letter-spacing:.05em;border-radius:6px;padding:2px 8px;
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:17px}
+.orderrow .who{font-family:'Architects Daughter',cursive;font-size:13px;letter-spacing:.05em;border-radius:6px;padding:2px 8px;
   background:#f2f6fa;border:2px solid #e2ecf5;color:#8b93ad;white-space:nowrap}
 .mover{width:30px;height:26px;border-radius:8px;border:2.5px solid #cfe3f2;background:#fffdf7;cursor:pointer;
-  font-family:'Over the Rainbow',cursive;font-size:14px;color:#7fc4e8;line-height:1}
+  font-family:'Architects Daughter',cursive;font-size:14px;color:#7fc4e8;line-height:1}
 .mover:hover{background:#f2fafe}
 .mover:disabled{opacity:.35;cursor:not-allowed}
 
@@ -324,11 +329,11 @@ input:focus{outline:none}
 .badge.locked{border-color:#e2ecf5;box-shadow:4px 5px 0 #f2f6fa;background:#fbfcfd}
 .badge:hover{transform:translateY(-4px) rotate(-.6deg)}
 .badge .seal{width:66px;height:66px;margin:0 auto 11px;border-radius:50%;background:var(--t);border:3.5px solid var(--c);
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:27px;color:var(--c)}
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:27px;color:var(--c)}
 .badge.locked .seal{background:#f2f6fa;border-color:#e2ecf5;color:#c3cbd9}
 .badge.locked .bname{color:#c3cbd9}
 .badge .ribbon{position:absolute;top:-12px;right:-9px;background:#ffe08a;border:2.5px solid #f0c85e;border-radius:7px;
-  padding:2px 10px;font-family:'Over the Rainbow',cursive;font-size:12px;letter-spacing:.05em;transform:rotate(6deg)}
+  padding:2px 10px;font-family:'Architects Daughter',cursive;font-size:12px;letter-spacing:.05em;transform:rotate(6deg)}
 
 /* ── the unlock toast ───────────────────────────────────────────────────── */
 .toastwrap{position:fixed;right:22px;bottom:22px;z-index:200;display:flex;flex-direction:column;gap:11px;
@@ -336,18 +341,18 @@ input:focus{outline:none}
 .toast{display:flex;align-items:center;gap:13px;background:#fffdf7;border:4px solid #f0c85e;border-radius:15px;
   padding:13px 19px;box-shadow:6px 8px 0 rgba(240,200,94,.42);animation:nb-pop .34s ease both;max-width:340px}
 .toast .seal{width:44px;height:44px;flex-shrink:0;border-radius:50%;background:#fffaeb;border:3px solid #f0c85e;
-  display:flex;align-items:center;justify-content:center;font-family:'Over the Rainbow',cursive;font-size:20px;color:#f0c85e}
+  display:flex;align-items:center;justify-content:center;font-family:'Architects Daughter',cursive;font-size:20px;color:#f0c85e}
 
 /* ── the gate ───────────────────────────────────────────────────────────── */
 .gatefield{margin-bottom:15px}
-.gatefield label{display:block;font-family:'Over the Rainbow',cursive;font-size:15px;letter-spacing:.05em;
+.gatefield label{display:block;font-family:'Architects Daughter',cursive;font-size:15px;letter-spacing:.05em;
   color:#8b93ad;margin-bottom:5px}
 .gateinput{width:100%;font-family:'Sue Ellen Francisco',cursive;font-size:22px;color:#3d4663;background:#f6fbfe;
   border:none;border-bottom:4px solid #cfe3f2;border-radius:9px 9px 0 0;padding:11px 14px;transition:all .13s}
 .gateinput:focus{border-bottom-color:#a98fd4;background:#f6f1ff}
 .gateinput.bad{border-bottom-color:#e79ec0;background:#fdeef4}
 .switcher{display:flex;gap:0;margin-bottom:22px;border:3.5px solid #cfe3f2;border-radius:13px;overflow:hidden}
-.switcher button{flex:1;font-family:'Over the Rainbow',cursive;font-size:17px;letter-spacing:.04em;padding:12px 8px;
+.switcher button{flex:1;font-family:'Architects Daughter',cursive;font-size:17px;letter-spacing:.04em;padding:12px 8px;
   border:none;background:#fffdf7;color:#8b93ad;cursor:pointer;transition:all .13s}
 .switcher button.on{background:#c9b6e4;color:#fffdf7}
 
@@ -355,3 +360,24 @@ input:focus{outline:none}
 .ribbonbar{height:20px;border-radius:999px;background:#eef4f9;border:3px solid #cfe3f2;overflow:hidden}
 .ribbonbar>div{height:100%;background:repeating-linear-gradient(45deg,#86ddc0,#86ddc0 9px,#a8e8d1 9px,#a8e8d1 18px);
   transition:width .55s cubic-bezier(.4,0,.2,1)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WORKS CITED — the one page that keeps the notebook's original two hands.
+   Everywhere else a title is Architects Daughter and a paragraph is Sue Ellen
+   Francisco. A bibliography should read as a bibliography, so here the titles
+   go back to Lilita One and the paragraphs back to Patrick Hand. Caveat is
+   unchanged, because it was always Caveat.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#view-cited{font-family:'Patrick Hand',cursive}
+#view-cited .lil,
+#view-cited .stamp,
+#view-cited .flag>span,
+#view-cited .btn{font-family:'Lilita One',cursive}
+#view-cited .hand,
+#view-cited .cite{font-family:'Patrick Hand',cursive}
+/* .muted is a colour, not a face, so it is left to inherit or to keep Caveat. */
+#view-cited .cav{font-family:'Caveat',cursive}
+/* The two faces sit larger on the line than the pair they replace, so the
+   academy's optical nudge is taken back off again here. */
+#view-cited .lil{line-height:1.14;letter-spacing:normal}
+#view-cited .hand{letter-spacing:normal}

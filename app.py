@@ -112,7 +112,10 @@ def key_ready() -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 GOOGLE_FONTS = {
-    "OverTheRainbow.ttf": "https://fonts.gstatic.com/s/overtherainbow/v22/11haGoXG1k_HKhMLUWz7Mc7vvW5upvOm9NA2XG0.ttf",
+    "ArchitectsDaughter.ttf": "https://fonts.gstatic.com/s/architectsdaughter/v20/KtkxAKiDZI_td1Lkx62xHZHDtgO_Y-bvfY4.ttf",
+    # The works cited page keeps the notebook's original two hands.
+    "LilitaOne.ttf": "https://fonts.gstatic.com/s/lilitaone/v17/i7dPIFZ9Zz-WBtRtedDbUEY.ttf",
+    "PatrickHand.ttf": "https://fonts.gstatic.com/s/patrickhand/v25/LDI1apSQOAYtSuYWp8ZhfYeMWQ.ttf",
     "SueEllenFrancisco.ttf": "https://fonts.gstatic.com/s/sueellenfrancisco/v22/wXK3E20CsoJ9j1DDkjHcQ5ZL8xRaxru9ropF2lqk9H4.ttf",
     "Caveat.ttf": "https://fonts.gstatic.com/s/caveat/v23/WnznHAc5bAfYB2QRah7pcpNvOx-pjcB9SII.ttf",
 }
@@ -266,7 +269,7 @@ PALETTE — use these and nothing else
 - highlighter {PALETTE['yellow']} / {PALETTE['yellow_dk']} · lime {PALETTE['lime']} · muted {PALETTE['muted']}
 
 TYPE — three voices, never mixed up
-- font-family="Over the Rainbow, cursive" for headlines and stamped labels. ALL CAPS.
+- font-family="Architects Daughter, cursive" for headlines and stamped labels. ALL CAPS.
 - font-family="Sue Ellen Francisco, cursive" for body text and worked math.
 - font-family="Caveat, cursive" for margin asides and annotations.
 - Body text is never smaller than 26px. Headlines are 44-64px.

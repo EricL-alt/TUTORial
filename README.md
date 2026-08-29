@@ -45,8 +45,9 @@ pip install -r requirements.txt
 python app.py            # http://127.0.0.1:5000
 ```
 
-The first run downloads the three notebook typefaces (Over the Rainbow for titles,
-Sue Ellen Francisco for paragraphs, Caveat for margin asides) into `static/fonts/`. They are only a reference for the SVG Claude writes —
+The first run downloads the notebook typefaces (Architects Daughter for titles,
+Sue Ellen Francisco for paragraphs, Caveat for margin asides, and Lilita One with
+Patrick Hand for the works cited page) into `static/fonts/`. They are only a reference for the SVG Claude writes —
 the frames themselves are rendered by Qwen, so an offline first run costs nothing.
 
 Qwen knobs live at the top of `app.py`:
@@ -285,6 +286,14 @@ evaluator understands: making an account, finishing a named unit, clearing a nam
 exercise, reaching four units, clearing every exercise, and finishing the lot. After any
 progress is recorded the server recomputes what the learner has earned and returns only
 what is new, which the page raises as a toast in the corner.
+
+## Typefaces
+
+Titles are Architects Daughter, paragraphs are Sue Ellen Francisco, and margin asides
+stay in Caveat. The works cited page is the one exception. It keeps the notebook's
+original two hands, Lilita One for its titles and Patrick Hand for its entries, so a
+bibliography still reads as a bibliography. That override is scoped to `#view-cited` at
+the foot of `static/notebook.css`.
 
 ## House style
 
