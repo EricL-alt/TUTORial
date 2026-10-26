@@ -2,7 +2,7 @@
 
 **Teaching students to use AI properly. TUTORial itself is only the worked example.**
 
-The site now has two halves.
+The site now has two parts, after an interactive curriculum section is added. 
 
 **The mission and the curriculum** are the point. TUTORial is not the best use anyone
 has found for artificial intelligence, and the front page says so in as many words. It
